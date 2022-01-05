@@ -1,52 +1,91 @@
 library(tidyverse)
 library(tidymodels)
-library(lubridate)
 
 set.seed(2022)
 
-customers <- read_csv("customers.csv")
-
+# read csv
+cust <- read_csv("customers.csv")
+trans <- read_csv("transactions.csv")
 geo <- read_csv("geo.csv")
 
+# deal with key issues
+trans <- trans %>% mutate(CUSTOMER = as.integer(gsub("\"", "", CUSTOMER)))
+cust <- cust %>% mutate(CUSTOMER = as.integer(CUSTOMER))
+geo <- geo %>% mutate(COUNTRY = case_when(
+  COUNTRY=="CH" ~ "Switzerland", 
+  COUNTRY=="FR" ~ "France",
+  TRUE ~ "NA")
+  )
+
+# left join all three csv files
+df <- trans %>% left_join(geo) %>% left_join(cust)
+
+# split train and test
+test <- df %>% filter(is.na(OFFER_STATUS))
+train <- df %>% anti_join(test)
+
+#  Check whether the test set matches the submission template
+submission_template <- read_csv('submission_random.csv')
+
+template_ids <- submission_template %>% arrange(id) %>% pull(id)
+test_ids <- test %>% arrange(TEST_SET_ID) %>% pull(TEST_SET_ID)
+all(template_ids == test_ids) #true if all the same, otherwise falls
+
 #read training set
-trans_training <- read_csv("transactions.csv")
-trans_training <- trans_training %>% filter(is.na(TEST_SET_ID))
+#trans_training <- read_csv("transactions.csv")
+#trans_training <- trans_training %>% filter(is.na(TEST_SET_ID))
 #remove test_ID column from training set
-trans_training <- trans_training %>% subset(select= - c(TEST_SET_ID))
-
+#trans_training <- trans_training %>% subset(select= - c(TEST_SET_ID))
 ### DATA PREPARATION on geo data
-
-#if country were unknown we can't identify custome
+#if country were unknown we can't identify customer
 #geo <- geo %>% filter(!is.na(COUNTRY))
 
-### DATA PREPARATION on customer data
+### DATA PREPARATION with recipe
+library(lubridate)
+
+rec <- recipe(
+  OFFER_STATUS~., data = train) %>%
+  update_role(MO_ID, new_role = "ID") %>%
+  update_role(SO_ID, new_role = "ID") %>%
+  step_mutate_at(TECH, BUSINESS_TYPE, PRICE_LIST, OWNERSHIP, COUNTRY, CURRENCY, fn = as.factor) %>%
+  step_mutate_at(OWNERSHIP, COUNTRY, CURRENCY, OFFER_STATUS, fn = toupper) %>%
+  step_mutate_at(CREATION_YEAR, fn = function(x) parse_date_time(x,orders="%d%m%y") %>% year()) %>%
+  step_select(-REV_CURRENT_YEAR) # REV_CURRENT_YEAR.1 is just a rounded number, correlation = 1
+  
+rec_data <- rec %>% prep() %>% bake(NULL)
+
+
+# Check REV_CURRENT_YEAR & REV_CURRENT_YEAR.1
+#dft <- df %>% filter(!is.na(REV_CURRENT_YEAR))
+#dft$REV_CURRENT_YEAR = as.numeric(gsub("\"", "", dft$REV_CURRENT_YEAR))
+#cor(dft$REV_CURRENT_YEAR, dft$REV_CURRENT_YEAR.1)
 
 #fix casing for string attributes
-customers <- customers %>% mutate_at(vars(OWNERSHIP, COUNTRY, CURRENCY), toupper)
+#customers <- customers %>% mutate_at(vars(OWNERSHIP, COUNTRY, CURRENCY), toupper)
 
 #correct data types of nominal attributes, not best practice
-customers <- customers %>% mutate(
-  OWNERSHIP = as.factor(OWNERSHIP),
-  COUNTRY = as.factor(COUNTRY),
-  COUNTRY = as.factor(COUNTRY)
-)
+#customers <- customers %>% mutate(
+#  OWNERSHIP = as.factor(OWNERSHIP),
+#  COUNTRY = as.factor(COUNTRY),
+#  COUNTRY = as.factor(COUNTRY)
+#)
 
 # remove \" from REV_CURRENT_YEAR and convert to numeric
-customers <- (customers %>% mutate(REV_CURRENT_YEAR = gsub("\"", "", REV_CURRENT_YEAR)))
-customers$REV_CURRENT_YEAR <- as.numeric(customers$REV_CURRENT_YEAR)
+#customers <- (customers %>% mutate(REV_CURRENT_YEAR = gsub("\"", "", REV_CURRENT_YEAR)))
+#customers$REV_CURRENT_YEAR <- as.numeric(customers$REV_CURRENT_YEAR)
 
 # convert CREATION_YEAR to date
-customers$CREATION_YEAR <- gsub(pattern="[[:punct:]]", ":", customers$CREATION_YEAR)
-customers$CREATION_YEAR <- as_date(customers$CREATION_YEAR, format="%d:%m:%Y")
+#customers$CREATION_YEAR <- gsub(pattern="[[:punct:]]", ":", customers$CREATION_YEAR)
+#customers$CREATION_YEAR <- as_date(customers$CREATION_YEAR, format="%d:%m:%Y")
 
 ### DATA PREPARATION on transaction data
 
 #correct data types of nominal attributes, not best practice
-trans_training <- trans_training %>% mutate(
-  TECH = as.factor(TECH),
-  BUSINESS_TYPE = as.factor(BUSINESS_TYPE),
-  PRICE_LIST = as.factor(PRICE_LIST)
-)
+#trans_training <- trans_training %>% mutate(
+#  TECH = as.factor(TECH),
+#  BUSINESS_TYPE = as.factor(BUSINESS_TYPE),
+#  PRICE_LIST = as.factor(PRICE_LIST)
+#)
 
 #omit rows with ISIC = NA or SALES_LOCATION = NA
 trans_training <- trans_training %>% filter(!is.na(ISIC) & !is.na(SALES_LOCATION))
