@@ -35,8 +35,8 @@ df <- df %>% left_join(cust, c("END_CUSTOMER" = "END_CUSTOMER", "COUNTRY" = "END
 df %>% summarize_all(function(x) sum(is.na(x)))
 
 # split train and test
-test <- df %>% filter(!is.na(TEST_SET_ID))
-train <- df %>% anti_join(test)
+train <- df %>% filter(is.na(TEST_SET_ID)) 
+test <- df %>% anti_join(train) %>% select(-OFFER_STATUS)
 
 #  Check whether the test set matches the submission template
 submission_template <- read_csv('submission_random.csv')
@@ -54,31 +54,52 @@ all(template_ids == test_ids) #true if all the same, otherwise falls
 #if country were unknown we can't identify customer
 #geo <- geo %>% filter(!is.na(COUNTRY))
 
+train <- train %>% mutate(
+  OFFER_STATUS = as.factor(case_when(
+    toupper(OFFER_STATUS) == "LOSE" ~ 0,
+    toupper(OFFER_STATUS) == "LOST" ~ 0,
+    TRUE ~ 1)
+  ))
+
+train <- train %>% select(-REV_CURRENT_YEAR, -END_REV_CURRENT_YEAR, -TEST_SET_ID)
+
+train <- train %>% select(MO_ID, SO_ID, 
+                          TECH, OFFER_TYPE, BUSINESS_TYPE,
+                          CREATION_YEAR, END_CREATION_YEAR,
+                          MO_CREATED_DATE, SO_CREATED_DATE,
+                          OFFER_STATUS)
+
 ### DATA PREPARATION with recipe
 library(lubridate)
 
 rec <- recipe(
-  OFFER_STATUS~., data = train) %>%
+  OFFER_STATUS ~ ., data = train) %>%
   # step_mutate(OFFER_ID = ifelse(is.na(SO_ID), MO_ID, SO_ID), role = "ID") %>%
   update_role(MO_ID, SO_ID, new_role = "ID") %>%
-  step_mutate_at(OWNERSHIP, COUNTRY, CURRENCY, OFFER_STATUS, fn = toupper) %>%
+  step_mutate_at(all_nominal(), -all_outcomes(), -has_role("ID"), fn = toupper) %>%
+  #step_mutate(OFFER_STATUS = as.factor(case_when(
+  #  toupper(OFFER_STATUS) == "LOSE" ~ 0,
+  #  toupper(OFFER_STATUS) == "LOST" ~ 0,
+  #  TRUE ~ 1)), skip = TRUE) %>%
   #data type of nominal attributes
-  step_mutate_at(TECH, BUSINESS_TYPE, PRICE_LIST, OWNERSHIP, END_OWNERSHIP, COUNTRY, CURRENCY, END_CURRENCY, fn = as.factor) %>%
+  #step_mutate_at(TECH, BUSINESS_TYPE, PRICE_LIST, OWNERSHIP, END_OWNERSHIP, COUNTRY, CURRENCY, END_CURRENCY, fn = as.factor) %>%
+  step_string2factor(all_nominal(), -all_outcomes(), -has_role("ID")) %>%
   #data types of dates
   step_mutate_at(CREATION_YEAR, END_CREATION_YEAR, fn = function(x) parse_date_time(x,orders="dmY") %>% year()) %>%
   step_mutate_at(MO_CREATED_DATE, SO_CREATED_DATE, fn = function(x) parse_date_time(x,orders=c("d.m.Y H:M", "Y-m-d H:M:S"))) %>%
   #binary dependent
-  step_mutate(OFFER_STATUS_BIN = case_when(
-    OFFER_STATUS == "LOSE" ~ 0,
-    OFFER_STATUS == "LOST" ~ 0,
-    TRUE ~ 1),
-    OFFER_STATUS = as.factor(OFFER_STATUS_BIN)) %>%
+  
   #remove cols
-  step_select(-OFFER_STATUS_BIN, -REV_CURRENT_YEAR, -END_REV_CURRENT_YEAR, -TEST_SET_ID) %>%  # REV_CURRENT_YEAR.1 is just a rounded number, correlation = 1
-  step_dummy(all_nominal_predictors()) %>% 
-  step_zv(all_predictors())
+  #step_select(-REV_CURRENT_YEAR, -END_REV_CURRENT_YEAR, -TEST_SET_ID) %>%  # REV_CURRENT_YEAR.1 is just a rounded number, correlation = 1
+  step_dummy(all_nominal_predictors(), -all_outcomes()) %>%
+  step_impute_mean(all_numeric_predictors(), -all_outcomes()) %>%
+  step_novel(all_nominal(), -all_outcomes(), -has_role("ID"), new_level="new") %>%
+  step_unknown(all_nominal(), -all_outcomes(), new_level = "none") %>% 
+  step_naomit(all_predictors(), -all_outcomes()) %>%
+  step_zv(all_predictors(), -all_outcomes())
 
 rec_data <- rec %>% prep() %>% bake(NULL)
+rec_test <- rec %>% prep() %>% bake(new_data=test)
 
 #train a random forest model
 train_model <- rand_forest(mode = "classification", mtry = 3, trees = 500) %>%
@@ -95,7 +116,18 @@ wflow <-
 
 wflow
 
+
 fitted <- wflow %>% fit(data=train)
+
+# try
+train_set_with_predictions <-
+  bind_cols(
+    train,
+    fitted %>% predict(train)
+  )
+train_set_with_predictions
+
+bal_accuracy_vec(train_set_with_predictions$OFFER_STATUS, train_set_with_predictions$.pred_class)
 
 truth <- test$OFFER_STATUS
 truth_train <- train$OFFER_STATUS
