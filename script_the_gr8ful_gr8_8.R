@@ -74,10 +74,41 @@ rec <- recipe(
     TRUE ~ 1),
     OFFER_STATUS = as.factor(OFFER_STATUS_BIN)) %>%
   #remove cols
-  step_select(-OFFER_STATUS_BIN, -REV_CURRENT_YEAR, -END_REV_CURRENT_YEAR, -TEST_SET_ID) # REV_CURRENT_YEAR.1 is just a rounded number, correlation = 1
-  
+  step_select(-OFFER_STATUS_BIN, -REV_CURRENT_YEAR, -END_REV_CURRENT_YEAR, -TEST_SET_ID) %>%  # REV_CURRENT_YEAR.1 is just a rounded number, correlation = 1
+  step_dummy(all_nominal_predictors()) %>% 
+  step_zv(all_predictors())
 
 rec_data <- rec %>% prep() %>% bake(NULL)
+
+#train a random forest model
+train_model <- rand_forest(mode = "classification", mtry = 3, trees = 500) %>%
+  set_engine("ranger")                  
+
+train_model
+
+wflow <- 
+  workflow() %>%
+  #model definition
+  add_model(train_model) %>% 
+  add_recipe(rec) 
+  #evaluation
+
+wflow
+
+fitted <- wflow %>% fit(data=train)
+
+truth <- test$OFFER_STATUS
+truth_train <- train$OFFER_STATUS
+
+pred <- predict(fitted, test)
+pred_train <- predict(fitted, train)
+bac <- bal_accuracy_vec(truth, pred)#balanced accuracy
+bac_train <- bal_accuracy_vec(truth_train, pred_train)#balanced accuracy
+
+bac_train
+
+error_rate = nrow(test %>% filter(as.character(OFFER_STATUS_BIN)!=pred))/nrow(test)
+error_rate 
 
 # Check REV_CURRENT_YEAR & REV_CURRENT_YEAR.1
 #dft <- df %>% filter(!is.na(REV_CURRENT_YEAR))
@@ -126,17 +157,17 @@ trans_training <- trans_training %>% filter(!is.na(ISIC) & !is.na(SALES_LOCATION
 #trans_training <- trans_training %>% subset(select= - c(OFFER_STATUS))
 
 #remove \" from CUSTOMER and END_CUSTOMER values
-trans_training <- trans_training %>% mutate(CUSTOMER = gsub("\"", "", CUSTOMER))
-trans_training <- trans_training %>% mutate(END_CUSTOMER = gsub("\"", "", END_CUSTOMER))
+#trans_training <- trans_training %>% mutate(CUSTOMER = gsub("\"", "", CUSTOMER))
+#trans_training <- trans_training %>% mutate(END_CUSTOMER = gsub("\"", "", END_CUSTOMER))
 
 #handle missing values in END_CUSTOMER: NA -> 0
-trans_training <- trans_training %>% mutate(END_CUSTOMER = toupper(END_CUSTOMER))
-trans_training <- trans_training %>% mutate(END_CUSTOMER = case_when(
-  is.na(END_CUSTOMER) ~ "0", #unknown end customer
-  END_CUSTOMER == "NO" ~ "0", #unknown end customer != customer TODO maybe handle this differently
-  END_CUSTOMER == "YES" ~ CUSTOMER, #customer is end customer
-  TRUE ~ END_CUSTOMER 
-))
+#trans_training <- trans_training %>% mutate(END_CUSTOMER = toupper(END_CUSTOMER))
+#trans_training <- trans_training %>% mutate(END_CUSTOMER = case_when(
+#  is.na(END_CUSTOMER) ~ "0", #unknown end customer
+#  END_CUSTOMER == "NO" ~ "0", #unknown end customer != customer TODO maybe handle this differently
+#  END_CUSTOMER == "YES" ~ CUSTOMER, #customer is end customer
+#  TRUE ~ END_CUSTOMER 
+#))
 
 #convert datestrings to datetime
 #trans_training$MO_CREATED_DATE <- gsub(pattern="[[:punct:]]", ":", trans_training$MO_CREATED_DATE)
@@ -145,8 +176,8 @@ trans_training <- trans_training %>% mutate(END_CUSTOMER = case_when(
 #trans_training <- trans_training %>% mutate_at(vars(MO_CREATED_DATE, SO_CREATED_DATE), as_datetime)
 
 # convert CUSTOMER IDs to numeric, unavailable values -> NA TODO: should these rows be ignored?
-trans_training$CUSTOMER <- as.numeric(trans_training$CUSTOMER)
-trans_training$END_CUSTOMER <- as.numeric(trans_training$END_CUSTOMER)
+#trans_training$CUSTOMER <- as.numeric(trans_training$CUSTOMER)
+#trans_training$END_CUSTOMER <- as.numeric(trans_training$END_CUSTOMER)
 
 #merge geo data using SALES_LOCATION
 #trans_training_joint <- merge(x = trans_training, y=geo, by='SALES_LOCATION', all.x=TRUE)
@@ -158,11 +189,11 @@ trans_training$END_CUSTOMER <- as.numeric(trans_training$END_CUSTOMER)
 train_model <- rand_forest(mode = "classification", mtry = 3, trees = 500) %>%
   set_engine("ranger") %>%
   fit(
-    as.factor(OFFER_STATUS_BIN) ~ OFFER_PRICE,
-    data = trans_training
+    as.factor(OFFER_STATUS) ~ OFFER_PRICE,
+    data = train
   )
 
-pred <- predict(train_model, trans_training)
+pred <- predict(train_model, train)
 error_rate = nrow(trans_training %>% filter(as.character(OFFER_STATUS_BIN)!=pred))/nrow(trans_training)
 error_rate 
 
