@@ -55,16 +55,17 @@ rec <- recipe(
   OFFER_STATUS~., data = train) %>%
   # step_mutate(OFFER_ID = ifelse(is.na(SO_ID), MO_ID, SO_ID), role = "ID") %>%
   update_role(MO_ID, SO_ID, new_role = "ID") %>%
-  step_mutate_at(TECH, BUSINESS_TYPE, PRICE_LIST, OWNERSHIP, COUNTRY, CURRENCY, fn = as.factor) %>%
+  step_mutate_at(TECH, BUSINESS_TYPE, PRICE_LIST, OWNERSHIP, END_OWNERSHIP, COUNTRY, CURRENCY, END_CURRENCY, fn = as.factor) %>%
   step_mutate_at(OWNERSHIP, COUNTRY, CURRENCY, OFFER_STATUS, fn = toupper) %>%
-  step_mutate_at(CREATION_YEAR, fn = function(x) parse_date_time(x,orders="dmY") %>% year()) %>%
+  step_mutate_at(CREATION_YEAR, END_CREATION_YEAR, fn = function(x) parse_date_time(x,orders="dmY") %>% year()) %>%
   step_mutate_at(MO_CREATED_DATE, SO_CREATED_DATE, fn = function(x) parse_date_time(x,orders=c("d.m.Y H:M", "Y-m-d H:M:S"))) %>%
-  step_select(-REV_CURRENT_YEAR, -TEST_SET_ID) %>% # REV_CURRENT_YEAR.1 is just a rounded number, correlation = 1
   step_mutate(OFFER_STATUS_BIN = case_when(
     OFFER_STATUS == "LOSE" ~ 0,
     OFFER_STATUS == "LOST" ~ 0,
     TRUE ~ 1),
-    OFFER_STATUS_BIN = as.factor(OFFER_STATUS_BIN))
+    OFFER_STATUS_BIN = as.factor(OFFER_STATUS_BIN)) %>% 
+  step_select(-REV_CURRENT_YEAR, -END_REV_CURRENT_YEAR, -TEST_SET_ID) # REV_CURRENT_YEAR.1 is just a rounded number, correlation = 1
+  
 
 rec_data <- rec %>% prep() %>% bake(NULL)
 
