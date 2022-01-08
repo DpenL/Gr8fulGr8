@@ -55,16 +55,20 @@ rec <- recipe(
   OFFER_STATUS~., data = train) %>%
   # step_mutate(OFFER_ID = ifelse(is.na(SO_ID), MO_ID, SO_ID), role = "ID") %>%
   update_role(MO_ID, SO_ID, new_role = "ID") %>%
-  step_mutate_at(TECH, BUSINESS_TYPE, PRICE_LIST, OWNERSHIP, END_OWNERSHIP, COUNTRY, CURRENCY, END_CURRENCY, fn = as.factor) %>%
   step_mutate_at(OWNERSHIP, COUNTRY, CURRENCY, OFFER_STATUS, fn = toupper) %>%
+  #data type of nominal attributes
+  step_mutate_at(TECH, BUSINESS_TYPE, PRICE_LIST, OWNERSHIP, END_OWNERSHIP, COUNTRY, CURRENCY, END_CURRENCY, fn = as.factor) %>%
+  #data types of dates
   step_mutate_at(CREATION_YEAR, END_CREATION_YEAR, fn = function(x) parse_date_time(x,orders="dmY") %>% year()) %>%
   step_mutate_at(MO_CREATED_DATE, SO_CREATED_DATE, fn = function(x) parse_date_time(x,orders=c("d.m.Y H:M", "Y-m-d H:M:S"))) %>%
+  #binary dependent
   step_mutate(OFFER_STATUS_BIN = case_when(
     OFFER_STATUS == "LOSE" ~ 0,
     OFFER_STATUS == "LOST" ~ 0,
     TRUE ~ 1),
-    OFFER_STATUS_BIN = as.factor(OFFER_STATUS_BIN)) %>% 
-  step_select(-REV_CURRENT_YEAR, -END_REV_CURRENT_YEAR, -TEST_SET_ID) # REV_CURRENT_YEAR.1 is just a rounded number, correlation = 1
+    OFFER_STATUS = as.factor(OFFER_STATUS_BIN)) %>%
+  #remove cols
+  step_select(-OFFER_STATUS_BIN, -REV_CURRENT_YEAR, -END_REV_CURRENT_YEAR, -TEST_SET_ID) # REV_CURRENT_YEAR.1 is just a rounded number, correlation = 1
   
 
 rec_data <- rec %>% prep() %>% bake(NULL)
@@ -105,15 +109,15 @@ rec_data <- rec %>% prep() %>% bake(NULL)
 trans_training <- trans_training %>% filter(!is.na(ISIC) & !is.na(SALES_LOCATION))
 
 #map training labels -> 0/1
-trans_training <- trans_training %>% mutate(OFFER_STATUS = toupper(OFFER_STATUS))
+#trans_training <- trans_training %>% mutate(OFFER_STATUS = toupper(OFFER_STATUS))
 #new column mapping losses->0, wins->1
-trans_training <- trans_training %>% mutate(OFFER_STATUS_BIN = case_when(
-  OFFER_STATUS == "LOSE" ~ 0,
-  OFFER_STATUS == "LOST" ~ 0,
-  TRUE ~ 1),
-  OFFER_STATUS_BIN = as.factor(OFFER_STATUS_BIN)
-)
-trans_training <- trans_training %>% subset(select= - c(OFFER_STATUS))
+#trans_training <- trans_training %>% mutate(OFFER_STATUS_BIN = case_when(
+#  OFFER_STATUS == "LOSE" ~ 0,
+#  OFFER_STATUS == "LOST" ~ 0,
+#  TRUE ~ 1),
+#  OFFER_STATUS_BIN = as.factor(OFFER_STATUS_BIN)
+#)
+#trans_training <- trans_training %>% subset(select= - c(OFFER_STATUS))
 
 #remove \" from CUSTOMER and END_CUSTOMER values
 trans_training <- trans_training %>% mutate(CUSTOMER = gsub("\"", "", CUSTOMER))
