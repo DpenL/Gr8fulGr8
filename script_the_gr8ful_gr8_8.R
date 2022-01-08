@@ -11,7 +11,13 @@ geo <- read_csv("geo.csv")
 
 # deal with key issues
 trans <- trans %>% mutate(CUSTOMER = as.integer(gsub("\"", "", CUSTOMER)))
-trans <- trans %>% mutate(END_CUSTOMER = as.integer(END_CUSTOMER))
+trans <- trans %>% mutate(END_CUSTOMER = toupper(END_CUSTOMER))
+trans <- trans %>% mutate(END_CUSTOMER = case_when(
+  is.na(END_CUSTOMER) ~ as.integer("a"), #unknown end customer
+  END_CUSTOMER == "NO" ~ as.integer("a"), #unknown end customer != customer TODO maybe handle this differently
+  END_CUSTOMER == "YES" ~ CUSTOMER, #customer is end customer
+  TRUE ~ as.integer(END_CUSTOMER) 
+))
 cust <- cust %>% mutate(CUSTOMER = as.integer(CUSTOMER))
 geo <- geo %>% mutate(COUNTRY = case_when(
   COUNTRY=="CH" ~ "Switzerland", 
