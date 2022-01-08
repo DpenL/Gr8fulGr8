@@ -11,6 +11,7 @@ geo <- read_csv("geo.csv")
 
 # deal with key issues
 trans <- trans %>% mutate(CUSTOMER = as.integer(gsub("\"", "", CUSTOMER)))
+trans <- trans %>% mutate(END_CUSTOMER = as.integer(END_CUSTOMER))
 cust <- cust %>% mutate(CUSTOMER = as.integer(CUSTOMER))
 geo <- geo %>% mutate(COUNTRY = case_when(
   COUNTRY=="CH" ~ "Switzerland", 
@@ -20,12 +21,15 @@ geo <- geo %>% mutate(COUNTRY = case_when(
 
 # left join all three csv files
 df <- trans %>% left_join(geo) %>% left_join(cust)
+#join cust a second time on END_CUSTOMER
+names(cust) <- paste0("END_", names(cust))
+df <- df %>% left_join(cust, c("END_CUSTOMER" = "END_CUSTOMER", "COUNTRY" = "END_COUNTRY"))
 
 # check missing values from different attributes
 df %>% summarize_all(function(x) sum(is.na(x)))
 
 # split train and test
-test <- df %>% filter(is.na(OFFER_STATUS))
+test <- df %>% filter(!is.na(TEST_SET_ID))
 train <- df %>% anti_join(test)
 
 #  Check whether the test set matches the submission template
@@ -55,7 +59,7 @@ rec <- recipe(
   step_mutate_at(OWNERSHIP, COUNTRY, CURRENCY, OFFER_STATUS, fn = toupper) %>%
   step_mutate_at(CREATION_YEAR, fn = function(x) parse_date_time(x,orders="dmY") %>% year()) %>%
   step_mutate_at(MO_CREATED_DATE, SO_CREATED_DATE, fn = function(x) parse_date_time(x,orders=c("d.m.Y H:M", "Y-m-d H:M:S"))) %>%
-  step_select(-REV_CURRENT_YEAR) %>% # REV_CURRENT_YEAR.1 is just a rounded number, correlation = 1
+  step_select(-REV_CURRENT_YEAR, -TEST_SET_ID) %>% # REV_CURRENT_YEAR.1 is just a rounded number, correlation = 1
   step_mutate(OFFER_STATUS_BIN = case_when(
     OFFER_STATUS == "LOSE" ~ 0,
     OFFER_STATUS == "LOST" ~ 0,
