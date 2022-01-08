@@ -2,6 +2,7 @@ library(tidyverse)
 library(tidymodels)
 
 set.seed(2022)
+options(dplyr.width = Inf) # show all columns when printing to console
 
 # read csv
 cust <- read_csv("customers.csv")
@@ -19,6 +20,9 @@ geo <- geo %>% mutate(COUNTRY = case_when(
 
 # left join all three csv files
 df <- trans %>% left_join(geo) %>% left_join(cust)
+
+# check missing values from different attributes
+df %>% summarize_all(function(x) sum(is.na(x)))
 
 # split train and test
 test <- df %>% filter(is.na(OFFER_STATUS))
@@ -45,15 +49,20 @@ library(lubridate)
 
 rec <- recipe(
   OFFER_STATUS~., data = train) %>%
-  update_role(MO_ID, new_role = "ID") %>%
-  update_role(SO_ID, new_role = "ID") %>%
+  # step_mutate(OFFER_ID = ifelse(is.na(SO_ID), MO_ID, SO_ID), role = "ID") %>%
+  update_role(MO_ID, SO_ID, new_role = "ID") %>%
   step_mutate_at(TECH, BUSINESS_TYPE, PRICE_LIST, OWNERSHIP, COUNTRY, CURRENCY, fn = as.factor) %>%
   step_mutate_at(OWNERSHIP, COUNTRY, CURRENCY, OFFER_STATUS, fn = toupper) %>%
-  step_mutate_at(CREATION_YEAR, fn = function(x) parse_date_time(x,orders="%d%m%y") %>% year()) %>%
-  step_select(-REV_CURRENT_YEAR) # REV_CURRENT_YEAR.1 is just a rounded number, correlation = 1
-  
-rec_data <- rec %>% prep() %>% bake(NULL)
+  step_mutate_at(CREATION_YEAR, fn = function(x) parse_date_time(x,orders="dmY") %>% year()) %>%
+  step_mutate_at(MO_CREATED_DATE, SO_CREATED_DATE, fn = function(x) parse_date_time(x,orders=c("d.m.Y H:M", "Y-m-d H:M:S"))) %>%
+  step_select(-REV_CURRENT_YEAR) %>% # REV_CURRENT_YEAR.1 is just a rounded number, correlation = 1
+  step_mutate(OFFER_STATUS_BIN = case_when(
+    OFFER_STATUS == "LOSE" ~ 0,
+    OFFER_STATUS == "LOST" ~ 0,
+    TRUE ~ 1),
+    OFFER_STATUS_BIN = as.factor(OFFER_STATUS_BIN))
 
+rec_data <- rec %>% prep() %>% bake(NULL)
 
 # Check REV_CURRENT_YEAR & REV_CURRENT_YEAR.1
 #dft <- df %>% filter(!is.na(REV_CURRENT_YEAR))
@@ -115,18 +124,18 @@ trans_training <- trans_training %>% mutate(END_CUSTOMER = case_when(
 ))
 
 #convert datestrings to datetime
-trans_training$MO_CREATED_DATE <- gsub(pattern="[[:punct:]]", ":", trans_training$MO_CREATED_DATE)
-trans_training$SO_CREATED_DATE <- gsub(pattern="[[:punct:]]", ":", trans_training$SO_CREATED_DATE)
+#trans_training$MO_CREATED_DATE <- gsub(pattern="[[:punct:]]", ":", trans_training$MO_CREATED_DATE)
+#trans_training$SO_CREATED_DATE <- gsub(pattern="[[:punct:]]", ":", trans_training$SO_CREATED_DATE)
 
-trans_training <- trans_training %>% mutate_at(vars(MO_CREATED_DATE, SO_CREATED_DATE), as_datetime)
+#trans_training <- trans_training %>% mutate_at(vars(MO_CREATED_DATE, SO_CREATED_DATE), as_datetime)
 
 # convert CUSTOMER IDs to numeric, unavailable values -> NA TODO: should these rows be ignored?
 trans_training$CUSTOMER <- as.numeric(trans_training$CUSTOMER)
 trans_training$END_CUSTOMER <- as.numeric(trans_training$END_CUSTOMER)
 
 #merge geo data using SALES_LOCATION
-trans_training_joint <- merge(x = trans_training, y=geo, by='SALES_LOCATION', all.x=TRUE)
-View(trans_training_joint %>% summarise(across(.cols = everything(), .fns = ~sum(is.na(.)))))
+#trans_training_joint <- merge(x = trans_training, y=geo, by='SALES_LOCATION', all.x=TRUE)
+#View(trans_training_joint %>% summarise(across(.cols = everything(), .fns = ~sum(is.na(.)))))
 
 ### TRAINING
 
