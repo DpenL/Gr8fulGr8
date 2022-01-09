@@ -38,6 +38,9 @@ df %>% summarize_all(function(x) sum(is.na(x)))
 train <- df %>% filter(is.na(TEST_SET_ID)) 
 test <- df %>% anti_join(train) %>% select(-OFFER_STATUS)
 
+#test ids for output file
+output_ids <- test$TEST_SET_ID
+
 #  Check whether the test set matches the submission template
 submission_template <- read_csv('submission_random.csv')
 
@@ -81,25 +84,31 @@ rec <- recipe(
   #  toupper(OFFER_STATUS) == "LOSE" ~ 0,
   #  toupper(OFFER_STATUS) == "LOST" ~ 0,
   #  TRUE ~ 1)), skip = TRUE) %>%
-  #data type of nominal attributes
-  #step_mutate_at(TECH, BUSINESS_TYPE, PRICE_LIST, OWNERSHIP, END_OWNERSHIP, COUNTRY, CURRENCY, END_CURRENCY, fn = as.factor) %>%
-  step_string2factor(all_nominal(), -all_outcomes(), -has_role("ID")) %>%
+  #impute missing dates with default value
+  step_mutate_at(MO_CREATED_DATE,SO_CREATED_DATE, fn = ~replace_na(.,"0:0:0 0:0")) %>% 
+  
   #data types of dates
   step_mutate_at(CREATION_YEAR, END_CREATION_YEAR, fn = function(x) parse_date_time(x,orders="dmY") %>% year()) %>%
-  step_mutate_at(MO_CREATED_DATE, SO_CREATED_DATE, fn = function(x) parse_date_time(x,orders=c("d.m.Y H:M", "Y-m-d H:M:S"))) %>%
+  step_mutate_at(MO_CREATED_DATE, SO_CREATED_DATE, fn = function(x) parse_date_time(gsub(pattern="[[:punct:]]", ":", x),orders=c("d:m:Y H:M", "Y:m:d H:M:S"))) %>%
+    
   #binary dependent
   
   #remove cols
   #step_select(-REV_CURRENT_YEAR, -END_REV_CURRENT_YEAR, -TEST_SET_ID) %>%  # REV_CURRENT_YEAR.1 is just a rounded number, correlation = 1
-  step_dummy(all_nominal_predictors(), -all_outcomes()) %>%
   step_impute_mean(all_numeric_predictors(), -all_outcomes()) %>%
   step_novel(all_nominal(), -all_outcomes(), -has_role("ID"), new_level="new") %>%
   step_unknown(all_nominal(), -all_outcomes(), new_level = "none") %>% 
-  step_naomit(all_predictors(), -all_outcomes()) %>%
+  #data type of nominal attributes
+  #step_mutate_at(TECH, BUSINESS_TYPE, PRICE_LIST, OWNERSHIP, END_OWNERSHIP, COUNTRY, CURRENCY, END_CURRENCY, fn = as.factor) %>%
+  step_string2factor(all_nominal(), -all_outcomes(), -has_role("ID")) %>%
+  step_dummy(all_nominal_predictors(), -all_outcomes()) %>%
+  step_naomit(all_predictors(), -all_outcomes(), -has_role("ID"), skip = TRUE) %>%
   step_zv(all_predictors(), -all_outcomes())
 
 rec_data <- rec %>% prep() %>% bake(NULL)
 rec_test <- rec %>% prep() %>% bake(new_data=test)
+
+View(rec_test%>% mutate_all(is.na) %>% summarize_all(sum))
 
 #train a random forest model
 train_model <- rand_forest(mode = "classification", mtry = 3, trees = 500) %>%
@@ -128,6 +137,26 @@ train_set_with_predictions <-
 train_set_with_predictions
 
 bal_accuracy_vec(train_set_with_predictions$OFFER_STATUS, train_set_with_predictions$.pred_class)
+
+test_set_with_predictions <-
+  bind_cols(
+    test,
+    fitted %>% predict(test)
+  )
+test_set_with_predictions
+test_predictions <- fitted %>% predict(test)
+test_predictions
+
+all(template_ids == output_ids)
+
+#create output file
+output <- data.frame(id=output_ids,prediction=test_predictions)
+output <- rename(output, prediction=.pred_class)
+
+output_file <- write.csv(output, file="predictions_the_gr8ful_gr8_8.csv", row.names=FALSE)
+
+output_file <- read_csv("predictions_the_gr8ful_gr8_8.csv")
+View(output_file)
 
 truth <- test$OFFER_STATUS
 truth_train <- train$OFFER_STATUS
