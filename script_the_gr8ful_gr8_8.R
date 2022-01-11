@@ -74,7 +74,7 @@ train <- train %>% select(-REV_CURRENT_YEAR, -END_REV_CURRENT_YEAR, -TEST_SET_ID
 
 ### DATA PREPARATION with recipe
 library(lubridate)
-library(quantmod)
+library(quantmod) # for exchange rates
 
 rec <- recipe(
   OFFER_STATUS ~ ., data = train) %>%
@@ -99,19 +99,21 @@ rec <- recipe(
   #data types of dates
   step_mutate_at(CREATION_YEAR, END_CREATION_YEAR, fn = function(x) parse_date_time(x,orders="dmY") %>% year()) %>%
   step_mutate_at(MO_CREATED_DATE, SO_CREATED_DATE, fn = function(x) parse_date_time(gsub(pattern="[[:punct:]]", ":", x),orders=c("d:m:Y H:M", "Y:m:d H:M:S"))) %>%
-    
   #exchange currencies to EUR
   #create exchange rate column and multiply prices
-  # step_mutate_at(CURRENCY, END_CURRENCY, fn= function(x) case_when(
-  #   (x == "EURO") ~ "EUR",
-  #   (x == "CHINESE YUAN") ~ "CNY",
-  #   (x == "US DOLLAR") ~ "USD",
-  #   (x == "POUND STERLING") ~ "GBP",
-  #   TRUE ~ "NA"
-  # )) %>% 
-  # step_mutate(EXCHANGE_RATE = getFX(str_replace_all(paste("EUR/",CURRENCY), " ", "")
-  #                                   , from = format(SO_CREATED_DATE %>% , format="%Y-%M-%D"))) %>% 
-  # 
+  step_mutate_at(CURRENCY, END_CURRENCY, fn= function(x) case_when(
+    (x == "EURO") ~ "EUR",
+    (x == "CHINESE YUAN") ~ "CNY",
+    (x == "US DOLLAR") ~ "USD",
+    (x == "POUND STERLING") ~ "GBP",
+    TRUE ~ "NA"
+  )) %>%
+  # step_mutate(EXCHANGE_RATE = case_when(
+  #   str_replace_all(CURRENCY, " ", "") != "NA" ~ NA,
+  #   TRUE ~  getFX(str_replace_all(paste("EUR/",CURRENCY), " ", "")
+  #                                    , from = (SO_CREATED_DATE %>% date())
+  # ))) %>%
+   
   #binary dependent
   
   #remove cols
