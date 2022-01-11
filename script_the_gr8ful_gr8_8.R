@@ -66,20 +66,29 @@ train <- train %>% mutate(
 
 train <- train %>% select(-REV_CURRENT_YEAR, -END_REV_CURRENT_YEAR, -TEST_SET_ID)
 
-train <- train %>% select(MO_ID, SO_ID, 
-                          TECH, OFFER_TYPE, BUSINESS_TYPE,
-                          CREATION_YEAR, END_CREATION_YEAR,
-                          MO_CREATED_DATE, SO_CREATED_DATE,
-                          OFFER_STATUS)
+#train <- train %>% select(MO_ID, SO_ID, 
+#                          TECH, OFFER_TYPE, BUSINESS_TYPE,
+#                          CREATION_YEAR, END_CREATION_YEAR,
+#                          MO_CREATED_DATE, SO_CREATED_DATE,
+#                          OFFER_STATUS)
 
 ### DATA PREPARATION with recipe
 library(lubridate)
+library(quantmod)
 
 rec <- recipe(
   OFFER_STATUS ~ ., data = train) %>%
   # step_mutate(OFFER_ID = ifelse(is.na(SO_ID), MO_ID, SO_ID), role = "ID") %>%
   update_role(MO_ID, SO_ID, new_role = "ID") %>%
   step_mutate_at(all_nominal(), -all_outcomes(), -has_role("ID"), fn = toupper) %>%
+ 
+  #binning
+  step_mutate(OFFER_PRICE = case_when(
+    is.na(OFFER_PRICE) ~ "NA",
+    OFFER_PRICE < 6000 ~ "<6k",
+    TRUE ~ ">=6k"
+  )) %>% 
+  
   #step_mutate(OFFER_STATUS = as.factor(case_when(
   #  toupper(OFFER_STATUS) == "LOSE" ~ 0,
   #  toupper(OFFER_STATUS) == "LOST" ~ 0,
@@ -91,6 +100,18 @@ rec <- recipe(
   step_mutate_at(CREATION_YEAR, END_CREATION_YEAR, fn = function(x) parse_date_time(x,orders="dmY") %>% year()) %>%
   step_mutate_at(MO_CREATED_DATE, SO_CREATED_DATE, fn = function(x) parse_date_time(gsub(pattern="[[:punct:]]", ":", x),orders=c("d:m:Y H:M", "Y:m:d H:M:S"))) %>%
     
+  #exchange currencies to EUR
+  #create exchange rate column and multiply prices
+  # step_mutate_at(CURRENCY, END_CURRENCY, fn= function(x) case_when(
+  #   (x == "EURO") ~ "EUR",
+  #   (x == "CHINESE YUAN") ~ "CNY",
+  #   (x == "US DOLLAR") ~ "USD",
+  #   (x == "POUND STERLING") ~ "GBP",
+  #   TRUE ~ "NA"
+  # )) %>% 
+  # step_mutate(EXCHANGE_RATE = getFX(str_replace_all(paste("EUR/",CURRENCY), " ", "")
+  #                                   , from = format(SO_CREATED_DATE %>% , format="%Y-%M-%D"))) %>% 
+  # 
   #binary dependent
   
   #remove cols
