@@ -38,7 +38,7 @@ df %>% summarize_all(function(x) sum(is.na(x)))
 train <- df %>% filter(is.na(TEST_SET_ID)) 
 test <- df %>% anti_join(train) %>% select(-OFFER_STATUS)
 
-#test ids for output file
+#test_ids for output file
 output_ids <- test$TEST_SET_ID
 
 #  Check whether the test set matches the submission template
@@ -47,15 +47,6 @@ submission_template <- read_csv('submission_random.csv')
 template_ids <- submission_template %>% arrange(id) %>% pull(id)
 test_ids <- test %>% arrange(TEST_SET_ID) %>% pull(TEST_SET_ID)
 all(template_ids == test_ids) #true if all the same, otherwise falls
-
-#read training set
-#trans_training <- read_csv("transactions.csv")
-#trans_training <- trans_training %>% filter(is.na(TEST_SET_ID))
-#remove test_ID column from training set
-#trans_training <- trans_training %>% subset(select= - c(TEST_SET_ID))
-### DATA PREPARATION on geo data
-#if country were unknown we can't identify customer
-#geo <- geo %>% filter(!is.na(COUNTRY))
 
 train <- train %>% mutate(
   OFFER_STATUS = as.factor(case_when(
@@ -89,10 +80,6 @@ rec <- recipe(
     TRUE ~ ">=6k"
   )) %>% 
   
-  #step_mutate(OFFER_STATUS = as.factor(case_when(
-  #  toupper(OFFER_STATUS) == "LOSE" ~ 0,
-  #  toupper(OFFER_STATUS) == "LOST" ~ 0,
-  #  TRUE ~ 1)), skip = TRUE) %>%
   #impute missing dates with default value
   step_mutate_at(MO_CREATED_DATE,SO_CREATED_DATE, fn = ~replace_na(.,"0:0:0 0:0")) %>% 
   
@@ -180,104 +167,3 @@ output_file <- write.csv(output, file="predictions_the_gr8ful_gr8_8.csv", row.na
 
 output_file <- read_csv("predictions_the_gr8ful_gr8_8.csv")
 View(output_file)
-
-truth <- test$OFFER_STATUS
-truth_train <- train$OFFER_STATUS
-
-pred <- predict(fitted, test)
-pred_train <- predict(fitted, train)
-bac <- bal_accuracy_vec(truth, pred)#balanced accuracy
-bac_train <- bal_accuracy_vec(truth_train, pred_train)#balanced accuracy
-
-bac_train
-
-error_rate = nrow(test %>% filter(as.character(OFFER_STATUS_BIN)!=pred))/nrow(test)
-error_rate 
-
-# Check REV_CURRENT_YEAR & REV_CURRENT_YEAR.1
-#dft <- df %>% filter(!is.na(REV_CURRENT_YEAR))
-#dft$REV_CURRENT_YEAR = as.numeric(gsub("\"", "", dft$REV_CURRENT_YEAR))
-#cor(dft$REV_CURRENT_YEAR, dft$REV_CURRENT_YEAR.1)
-
-#fix casing for string attributes
-#customers <- customers %>% mutate_at(vars(OWNERSHIP, COUNTRY, CURRENCY), toupper)
-
-#correct data types of nominal attributes, not best practice
-#customers <- customers %>% mutate(
-#  OWNERSHIP = as.factor(OWNERSHIP),
-#  COUNTRY = as.factor(COUNTRY),
-#  COUNTRY = as.factor(COUNTRY)
-#)
-
-# remove \" from REV_CURRENT_YEAR and convert to numeric
-#customers <- (customers %>% mutate(REV_CURRENT_YEAR = gsub("\"", "", REV_CURRENT_YEAR)))
-#customers$REV_CURRENT_YEAR <- as.numeric(customers$REV_CURRENT_YEAR)
-
-# convert CREATION_YEAR to date
-#customers$CREATION_YEAR <- gsub(pattern="[[:punct:]]", ":", customers$CREATION_YEAR)
-#customers$CREATION_YEAR <- as_date(customers$CREATION_YEAR, format="%d:%m:%Y")
-
-### DATA PREPARATION on transaction data
-
-#correct data types of nominal attributes, not best practice
-#trans_training <- trans_training %>% mutate(
-#  TECH = as.factor(TECH),
-#  BUSINESS_TYPE = as.factor(BUSINESS_TYPE),
-#  PRICE_LIST = as.factor(PRICE_LIST)
-#)
-
-#omit rows with ISIC = NA or SALES_LOCATION = NA
-trans_training <- trans_training %>% filter(!is.na(ISIC) & !is.na(SALES_LOCATION))
-
-#map training labels -> 0/1
-#trans_training <- trans_training %>% mutate(OFFER_STATUS = toupper(OFFER_STATUS))
-#new column mapping losses->0, wins->1
-#trans_training <- trans_training %>% mutate(OFFER_STATUS_BIN = case_when(
-#  OFFER_STATUS == "LOSE" ~ 0,
-#  OFFER_STATUS == "LOST" ~ 0,
-#  TRUE ~ 1),
-#  OFFER_STATUS_BIN = as.factor(OFFER_STATUS_BIN)
-#)
-#trans_training <- trans_training %>% subset(select= - c(OFFER_STATUS))
-
-#remove \" from CUSTOMER and END_CUSTOMER values
-#trans_training <- trans_training %>% mutate(CUSTOMER = gsub("\"", "", CUSTOMER))
-#trans_training <- trans_training %>% mutate(END_CUSTOMER = gsub("\"", "", END_CUSTOMER))
-
-#handle missing values in END_CUSTOMER: NA -> 0
-#trans_training <- trans_training %>% mutate(END_CUSTOMER = toupper(END_CUSTOMER))
-#trans_training <- trans_training %>% mutate(END_CUSTOMER = case_when(
-#  is.na(END_CUSTOMER) ~ "0", #unknown end customer
-#  END_CUSTOMER == "NO" ~ "0", #unknown end customer != customer TODO maybe handle this differently
-#  END_CUSTOMER == "YES" ~ CUSTOMER, #customer is end customer
-#  TRUE ~ END_CUSTOMER 
-#))
-
-#convert datestrings to datetime
-#trans_training$MO_CREATED_DATE <- gsub(pattern="[[:punct:]]", ":", trans_training$MO_CREATED_DATE)
-#trans_training$SO_CREATED_DATE <- gsub(pattern="[[:punct:]]", ":", trans_training$SO_CREATED_DATE)
-
-#trans_training <- trans_training %>% mutate_at(vars(MO_CREATED_DATE, SO_CREATED_DATE), as_datetime)
-
-# convert CUSTOMER IDs to numeric, unavailable values -> NA TODO: should these rows be ignored?
-#trans_training$CUSTOMER <- as.numeric(trans_training$CUSTOMER)
-#trans_training$END_CUSTOMER <- as.numeric(trans_training$END_CUSTOMER)
-
-#merge geo data using SALES_LOCATION
-#trans_training_joint <- merge(x = trans_training, y=geo, by='SALES_LOCATION', all.x=TRUE)
-#View(trans_training_joint %>% summarise(across(.cols = everything(), .fns = ~sum(is.na(.)))))
-
-### TRAINING
-
-#train a random forest model
-train_model <- rand_forest(mode = "classification", mtry = 3, trees = 500) %>%
-  set_engine("ranger") %>%
-  fit(
-    as.factor(OFFER_STATUS) ~ OFFER_PRICE,
-    data = train
-  )
-
-pred <- predict(train_model, train)
-error_rate = nrow(trans_training %>% filter(as.character(OFFER_STATUS_BIN)!=pred))/nrow(trans_training)
-error_rate 
-
