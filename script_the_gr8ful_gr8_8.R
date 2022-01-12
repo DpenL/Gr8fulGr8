@@ -1,5 +1,6 @@
 library(tidyverse)
 library(tidymodels)
+library(rsample)
 
 set.seed(2022)
 options(dplyr.width = Inf) # show all columns when printing to console
@@ -63,6 +64,8 @@ train <- train %>% select(-REV_CURRENT_YEAR, -END_REV_CURRENT_YEAR, -TEST_SET_ID
 #                          MO_CREATED_DATE, SO_CREATED_DATE,
 #                          OFFER_STATUS)
 
+folds <- train %>% vfold_cv(v=5)
+
 ### DATA PREPARATION with recipe
 library(lubridate)
 library(quantmod) # for exchange rates
@@ -70,15 +73,20 @@ library(quantmod) # for exchange rates
 rec <- recipe(
   OFFER_STATUS ~ ., data = train) %>%
   # step_mutate(OFFER_ID = ifelse(is.na(SO_ID), MO_ID, SO_ID), role = "ID") %>%
-  update_role(MO_ID, SO_ID, new_role = "ID") %>%
+  update_role(MO_ID, SO_ID, CUSTOMER, END_CUSTOMER, new_role = "ID") %>%
   step_mutate_at(all_nominal(), -all_outcomes(), -has_role("ID"), fn = toupper) %>%
  
+  #step_discretize(OFFER_PRICE) %>% TODO
+  
   #binning
-  step_mutate(OFFER_PRICE = case_when(
-    is.na(OFFER_PRICE) ~ "NA",
-    OFFER_PRICE < 6000 ~ "<6k",
-    TRUE ~ ">=6k"
-  )) %>% 
+   step_mutate(OFFER_PRICE = case_when(
+     is.na(OFFER_PRICE) ~ "NA",
+     OFFER_PRICE < 6000 ~ "<6k",
+     TRUE ~ ">=6k"
+   )) %>% 
+  
+  step_mutate_at(REV_CURRENT_YEAR.1, REV_CURRENT_YEAR.2, END_REV_CURRENT_YEAR.1, END_REV_CURRENT_YEAR.2,
+     fn = function(x) predict(discretize(x, cuts = 4, keep_na = TRUE, na.rm = TRUE), x)) %>% 
   
   #impute missing dates with default value
   step_mutate_at(MO_CREATED_DATE,SO_CREATED_DATE, fn = ~replace_na(.,"0:0:0 0:0")) %>% 
@@ -86,6 +94,8 @@ rec <- recipe(
   #data types of dates
   step_mutate_at(CREATION_YEAR, END_CREATION_YEAR, fn = function(x) parse_date_time(x,orders="dmY") %>% year()) %>%
   step_mutate_at(MO_CREATED_DATE, SO_CREATED_DATE, fn = function(x) parse_date_time(gsub(pattern="[[:punct:]]", ":", x),orders=c("d:m:Y H:M", "Y:m:d H:M:S"))) %>%
+  step_mutate_at(CREATION_YEAR, END_CREATION_YEAR, fn = ~replace_na(.,0)) %>% 
+  
   #exchange currencies to EUR
   #create exchange rate column and multiply prices
   step_mutate_at(CURRENCY, END_CURRENCY, fn= function(x) case_when(
@@ -101,17 +111,27 @@ rec <- recipe(
   #                                    , from = (SO_CREATED_DATE %>% date())
   # ))) %>%
    
-  #binary dependent
+  step_mutate(ISIC.1 = case_when(
+    is.na(ISIC) ~ "NA",
+    TRUE ~ as.character(as.numeric(ISIC) %/% 100)
+  )) %>% 
+  
+  step_mutate(ISIC.2 = case_when(
+    is.na(ISIC) ~ "NA",
+    TRUE ~ as.character(as.numeric(ISIC) %% 100)
+  )) %>% 
+  
+  #step_select(-ISIC) %>% 
   
   #remove cols
   #step_select(-REV_CURRENT_YEAR, -END_REV_CURRENT_YEAR, -TEST_SET_ID) %>%  # REV_CURRENT_YEAR.1 is just a rounded number, correlation = 1
-  step_impute_mean(all_numeric_predictors(), -all_outcomes()) %>%
+  step_impute_mean(all_numeric_predictors(), -all_outcomes()) %>% #TODO -ISIC
   step_novel(all_nominal(), -all_outcomes(), -has_role("ID"), new_level="new") %>%
   step_unknown(all_nominal(), -all_outcomes(), new_level = "none") %>% 
   #data type of nominal attributes
   #step_mutate_at(TECH, BUSINESS_TYPE, PRICE_LIST, OWNERSHIP, END_OWNERSHIP, COUNTRY, CURRENCY, END_CURRENCY, fn = as.factor) %>%
   step_string2factor(all_nominal(), -all_outcomes(), -has_role("ID")) %>%
-  step_dummy(all_nominal_predictors(), -all_outcomes()) %>%
+  step_dummy(all_nominal_predictors(), -all_outcomes(), -has_role("ID")) %>%
   step_naomit(all_predictors(), -all_outcomes(), -has_role("ID"), skip = TRUE) %>%
   step_zv(all_predictors(), -all_outcomes())
 
@@ -122,7 +142,7 @@ View(rec_test%>% mutate_all(is.na) %>% summarize_all(sum))
 
 #train a random forest model
 train_model <- rand_forest(mode = "classification", mtry = 3, trees = 500) %>%
-  set_engine("ranger")                  
+  set_engine("ranger",  importance = "impurity")                  
 
 train_model
 
@@ -136,13 +156,25 @@ wflow <-
 wflow
 
 
-fitted <- wflow %>% fit(data=train)
+fitted <- wflow %>% fit_resamples(folds, metrics = metric_set(yardstick::bal_accuracy))
+
+best_config <- fitted %>%
+  # find the best tried configuration for a certain criterion
+  select_best('bal_accuracy')
+final_workflow <- wflow %>% 
+  finalize_workflow(best_config)
+
+final_workflow
+
+trained_model <- final_workflow %>% 
+  fit(data=train)
+
 
 # try
 train_set_with_predictions <-
   bind_cols(
     train,
-    fitted %>% predict(train)
+    trained_model %>% predict(train)
   )
 train_set_with_predictions
 
@@ -151,10 +183,10 @@ bal_accuracy_vec(train_set_with_predictions$OFFER_STATUS, train_set_with_predict
 test_set_with_predictions <-
   bind_cols(
     test,
-    fitted %>% predict(test)
+    trained_model %>% predict(test)
   )
 test_set_with_predictions
-test_predictions <- fitted %>% predict(test)
+test_predictions <- trained_model %>% predict(test)
 test_predictions
 
 all(template_ids == output_ids)
