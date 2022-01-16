@@ -27,7 +27,20 @@ trans <- trans %>% mutate(DIFFERENT_END_CUSTOMER = case_when(
 #remove END_CUSTOMER column
 trans <- trans %>% select(-END_CUSTOMER)
 
+#split ISIC into hierarchical parts TODO: right now they will get turned into factors
+trans <- trans %>% mutate(ISIC.1 = case_when(
+  is.na(ISIC) ~ "NA",
+  TRUE ~ as.character(as.numeric(ISIC) %/% 100)
+))
+  
+trans <- trans %>% mutate(ISIC.2 = case_when(
+    is.na(ISIC) ~ "NA",
+    TRUE ~ as.character(as.numeric(ISIC) %% 100)
+  )) 
+#remove full ISIC column
+trans <- trans %>% select(-ISIC)
 
+#prepare customer keys
 cust <- cust %>% mutate(CUSTOMER = as.integer(CUSTOMER))
 geo <- geo %>% mutate(COUNTRY = case_when(
   COUNTRY=="CH" ~ "Switzerland", 
@@ -84,17 +97,14 @@ rec <- recipe(
   update_role(MO_ID, SO_ID, new_role = "ID") %>%
   step_mutate_at(all_nominal(), -all_outcomes(), -has_role("ID"), fn = toupper) %>%
  
-  #step_discretize(OFFER_PRICE) %>% TODO
+  #replace missing offer prices with list price
+  step_mutate(OFFER_PRICE = case_when(
+    is.na(OFFER_PRICE) ~ SERVICE_LIST_PRICE,
+    TRUE ~ OFFER_PRICE
+  )) %>% 
   
-  #binning
-   step_mutate(OFFER_PRICE = case_when(
-     is.na(OFFER_PRICE) ~ "NA",
-     OFFER_PRICE < 6000 ~ "<6k",
-     TRUE ~ ">=6k"
-   )) %>% 
-  
-  step_mutate_at(REV_CURRENT_YEAR.1, REV_CURRENT_YEAR.2,
-     fn = function(x) predict(discretize(x, cuts = 4, keep_na = TRUE, na.rm = TRUE), x)) %>% 
+  #step_mutate_at(REV_CURRENT_YEAR.1, REV_CURRENT_YEAR.2,
+  #   fn = function(x) predict(discretize(x, cuts = 4, keep_na = TRUE, na.rm = TRUE), x)) %>% 
   
   #data types of dates, impute missing with mean
   step_mutate_at(CREATION_YEAR, fn = function(x) parse_date_time(x,orders="dmY") %>% year()) %>%
@@ -115,26 +125,20 @@ rec <- recipe(
   #   TRUE ~  getFX(str_replace_all(paste("EUR/",CURRENCY), " ", "")
   #                                    , from = (SO_CREATED_DATE %>% date())
   # ))) %>%
-   
-  step_mutate(ISIC.1 = case_when(
-    is.na(ISIC) ~ "NA",
-    TRUE ~ as.character(as.numeric(ISIC) %/% 100)
+  
+  #impute numerics with mean
+  step_impute_mean(all_numeric_predictors(), -all_outcomes()) %>%
+  
+  #logarithmetize revenues (#of digits)
+  step_mutate_at(REV_CURRENT_YEAR.1, REV_CURRENT_YEAR.2, fn = function(x) case_when(
+    is.na(x) ~ 0,
+    x == 0.0 ~ 0,
+    TRUE ~ log10(x)
   )) %>% 
   
-  step_mutate(ISIC.2 = case_when(
-    is.na(ISIC) ~ "NA",
-    TRUE ~ as.character(as.numeric(ISIC) %% 100)
-  )) %>% 
-  
-  #step_select(-ISIC) %>% 
-  
-  #remove cols
-  #step_select(-REV_CURRENT_YEAR, -END_REV_CURRENT_YEAR, -TEST_SET_ID) %>%  # REV_CURRENT_YEAR.1 is just a rounded number, correlation = 1
-  step_impute_mean(all_numeric_predictors(), -all_outcomes()) %>% #TODO -ISIC
   step_novel(all_nominal(), -all_outcomes(), -has_role("ID"), new_level="new") %>%
   step_unknown(all_nominal(), -all_outcomes(), new_level = "none") %>% 
   #data type of nominal attributes
-  #step_mutate_at(TECH, BUSINESS_TYPE, PRICE_LIST, OWNERSHIP, END_OWNERSHIP, COUNTRY, CURRENCY, END_CURRENCY, fn = as.factor) %>%
   step_string2factor(all_nominal(), -all_outcomes(), -has_role("ID")) %>%
   step_dummy(all_nominal_predictors(), -all_outcomes(), -has_role("ID")) %>%
   step_naomit(all_predictors(), -all_outcomes(), -has_role("ID"), skip = TRUE) %>%
