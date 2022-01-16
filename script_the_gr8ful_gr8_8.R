@@ -12,13 +12,22 @@ geo <- read_csv("geo.csv")
 
 # deal with key issues
 trans <- trans %>% mutate(CUSTOMER = as.integer(gsub("\"", "", CUSTOMER)))
-trans <- trans %>% mutate(END_CUSTOMER = toupper(END_CUSTOMER))
+#trans <- trans %>% mutate(END_CUSTOMER = toupper(END_CUSTOMER))
 trans <- trans %>% mutate(END_CUSTOMER = case_when(
-  is.na(END_CUSTOMER) ~ as.integer("a"), #unknown end customer
-  END_CUSTOMER == "NO" ~ as.integer("a"), #unknown end customer != customer TODO maybe handle this differently
-  END_CUSTOMER == "YES" ~ CUSTOMER, #customer is end customer
+  is.na(END_CUSTOMER) ~ CUSTOMER, #unknown end_customer, assume same as customer
+  toupper(END_CUSTOMER) == "NO" ~ as.integer("a"), #unknown end customer != customer TODO maybe handle this differently
+  toupper(END_CUSTOMER) == "YES" ~ CUSTOMER, #customer is end customer
   TRUE ~ as.integer(END_CUSTOMER) 
 ))
+#feature: is customer end_customer?
+trans <- trans %>% mutate(DIFFERENT_END_CUSTOMER = case_when(
+  CUSTOMER == END_CUSTOMER ~ 0,
+  TRUE ~ 1
+))
+#remove END_CUSTOMER column
+trans <- trans %>% select(-END_CUSTOMER)
+
+
 cust <- cust %>% mutate(CUSTOMER = as.integer(CUSTOMER))
 geo <- geo %>% mutate(COUNTRY = case_when(
   COUNTRY=="CH" ~ "Switzerland", 
@@ -27,10 +36,9 @@ geo <- geo %>% mutate(COUNTRY = case_when(
   )
 
 # left join all three csv files
-df <- trans %>% left_join(geo) %>% left_join(cust)
-#join cust a second time on END_CUSTOMER
-names(cust) <- paste0("END_", names(cust))
-df <- df %>% left_join(cust, c("END_CUSTOMER" = "END_CUSTOMER", "COUNTRY" = "END_COUNTRY"))
+df <- trans %>% left_join(geo) %>% left_join(cust) #join cust a second time on END_CUSTOMER
+#names(cust) <- paste0("END_", names(cust))
+#df <- df %>% left_join(cust, c("END_CUSTOMER" = "END_CUSTOMER", "COUNTRY" = "END_COUNTRY"))
 
 # check missing values from different attributes
 df %>% summarize_all(function(x) sum(is.na(x)))
@@ -56,7 +64,7 @@ train <- train %>% mutate(
     TRUE ~ 1)
   ))
 
-train <- train %>% select(-REV_CURRENT_YEAR, -END_REV_CURRENT_YEAR, -TEST_SET_ID)
+train <- train %>% select(-REV_CURRENT_YEAR, -TEST_SET_ID)
 
 #train <- train %>% select(MO_ID, SO_ID, 
 #                          TECH, OFFER_TYPE, BUSINESS_TYPE,
@@ -73,7 +81,7 @@ library(quantmod) # for exchange rates
 rec <- recipe(
   OFFER_STATUS ~ ., data = train) %>%
   # step_mutate(OFFER_ID = ifelse(is.na(SO_ID), MO_ID, SO_ID), role = "ID") %>%
-  update_role(MO_ID, SO_ID, CUSTOMER, END_CUSTOMER, new_role = "ID") %>%
+  update_role(MO_ID, SO_ID, new_role = "ID") %>%
   step_mutate_at(all_nominal(), -all_outcomes(), -has_role("ID"), fn = toupper) %>%
  
   #step_discretize(OFFER_PRICE) %>% TODO
@@ -85,20 +93,17 @@ rec <- recipe(
      TRUE ~ ">=6k"
    )) %>% 
   
-  step_mutate_at(REV_CURRENT_YEAR.1, REV_CURRENT_YEAR.2, END_REV_CURRENT_YEAR.1, END_REV_CURRENT_YEAR.2,
+  step_mutate_at(REV_CURRENT_YEAR.1, REV_CURRENT_YEAR.2,
      fn = function(x) predict(discretize(x, cuts = 4, keep_na = TRUE, na.rm = TRUE), x)) %>% 
   
-  #impute missing dates with default value
-  step_mutate_at(MO_CREATED_DATE,SO_CREATED_DATE, fn = ~replace_na(.,"0:0:0 0:0")) %>% 
-  
-  #data types of dates
-  step_mutate_at(CREATION_YEAR, END_CREATION_YEAR, fn = function(x) parse_date_time(x,orders="dmY") %>% year()) %>%
-  step_mutate_at(MO_CREATED_DATE, SO_CREATED_DATE, fn = function(x) parse_date_time(gsub(pattern="[[:punct:]]", ":", x),orders=c("d:m:Y H:M", "Y:m:d H:M:S"))) %>%
-  step_mutate_at(CREATION_YEAR, END_CREATION_YEAR, fn = ~replace_na(.,0)) %>% 
+  #data types of dates, impute missing with mean
+  step_mutate_at(CREATION_YEAR, fn = function(x) parse_date_time(x,orders="dmY") %>% year()) %>%
+  step_mutate_at(CREATION_YEAR, fn = ~replace_na(.,as.integer(mean(CREATION_YEAR)))) %>% 
+  step_mutate_at(MO_CREATED_DATE, SO_CREATED_DATE, fn = function(x) as.numeric(parse_date_time(gsub(pattern="[[:punct:]]", ":", x),orders=c("d:m:Y H:M", "Y:m:d H:M:S")))) %>%
   
   #exchange currencies to EUR
   #create exchange rate column and multiply prices
-  step_mutate_at(CURRENCY, END_CURRENCY, fn= function(x) case_when(
+  step_mutate_at(CURRENCY, fn= function(x) case_when(
     (x == "EURO") ~ "EUR",
     (x == "CHINESE YUAN") ~ "CNY",
     (x == "US DOLLAR") ~ "USD",
