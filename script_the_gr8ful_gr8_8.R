@@ -4,7 +4,7 @@ library(rsample)
 
 set.seed(2022)
 options(dplyr.width = Inf) # show all columns when printing to console
-
+d
 # read csv
 cust <- read_csv("customers.csv")
 trans <- read_csv("transactions.csv")
@@ -49,7 +49,8 @@ geo <- geo %>% mutate(COUNTRY = case_when(
   )
 
 cust <- cust %>% mutate(
-  REV_SUM = REV_CURRENT_YEAR.1 + REV_CURRENT_YEAR.2
+  REV_SUM = REV_CURRENT_YEAR.1 + REV_CURRENT_YEAR.2,
+  DELTA_REV = REV_CURRENT_YEAR.1 - REV_CURRENT_YEAR.2
   )
 
 cust <- cust %>% select(-REV_CURRENT_YEAR, -REV_CURRENT_YEAR.1, -REV_CURRENT_YEAR.2)
@@ -98,6 +99,7 @@ train <- train %>% select(MO_ID, SO_ID,
                           MO_CREATED_DATE, SO_CREATED_DATE,
                           DIFFERENT_END_CUSTOMER,
                           REV_SUM,
+                          DELTA_REV,
                           CURRENCY,
                           OFFER_STATUS)
 
@@ -150,7 +152,7 @@ rec <- recipe(
   
   step_mutate(
     REV_SUM = case_when(
-    is.na(CURRENCY) ~ NA_real_,
+    is.na(CURRENCY) || is.nan(CURRENCY) ~ NA_real_,
     CURRENCY == "EURO" ~ REV_SUM,
     CURRENCY == "CHINESE YUAN" ~ CNY*REV_SUM,
     CURRENCY == "US DOLLAR" ~ USD*REV_SUM,
@@ -158,11 +160,26 @@ rec <- recipe(
     TRUE ~ NA_real_
   ),
     REV_SUM = case_when(
-      is.na(REV_SUM) ~ 0,
+      is.na(REV_SUM) || is.nan(REV_SUM) ~ 0,
       REV_SUM == 0.0 ~ 0,
       TRUE ~ log10(REV_SUM)
     )) %>%
 
+  step_mutate(
+    DELTA_REV = case_when(
+      is.na(CURRENCY) || is.nan(CURRENCY) ~ NA_real_,
+      CURRENCY == "EURO" ~ DELTA_REV,
+      CURRENCY == "CHINESE YUAN" ~ CNY*DELTA_REV,
+      CURRENCY == "US DOLLAR" ~ USD*DELTA_REV,
+      CURRENCY == "POUND STERLING" ~ GBP*DELTA_REV,
+      TRUE ~ NA_real_
+    ),
+    DELTA_REV = case_when(
+      is.na(DELTA_REV) || is.nan(DELTA_REV) ~ 0,
+      DELTA_REV == 0.0 ~ 0,
+      TRUE ~ log10(DELTA_REV)
+    )) %>%
+  
   #impute numerics with mean
   step_impute_mean(all_numeric_predictors(), -all_outcomes()) %>%
   
@@ -232,7 +249,7 @@ train_set_with_predictions <- train_set_with_predictions %>%
   mutate(pred=as.factor(ifelse(.pred_0>0.2,0,1)))
 
 bal_accuracy_vec(train_set_with_predictions$OFFER_STATUS, train_set_with_predictions$pred)
-bal_accuracy_vec(train_set_with_predictions$OFFER_STATUS, train_set_with_predictions$.pred_class)
+#bal_accuracy_vec(train_set_with_predictions$OFFER_STATUS, train_set_with_predictions$.pred_class)
 
 test_set_with_predictions <-
   bind_cols(
