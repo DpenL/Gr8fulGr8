@@ -48,6 +48,12 @@ geo <- geo %>% mutate(COUNTRY = case_when(
   TRUE ~ "NA")
   )
 
+cust <- cust %>% mutate(
+  REV_SUM = REV_CURRENT_YEAR.1 + REV_CURRENT_YEAR.2
+  )
+
+cust <- cust %>% select(-REV_CURRENT_YEAR, -REV_CURRENT_YEAR.1, -REV_CURRENT_YEAR.2)
+
 # left join all three csv files
 df <- trans %>% left_join(geo) %>% left_join(cust) #join cust a second time on END_CUSTOMER
 #names(cust) <- paste0("END_", names(cust))
@@ -77,19 +83,34 @@ train <- train %>% mutate(
     TRUE ~ 1)
   ))
 
-train <- train %>% select(-REV_CURRENT_YEAR, -TEST_SET_ID)
+train <- train %>% select(-TEST_SET_ID)
 
-#train <- train %>% select(MO_ID, SO_ID, 
-#                          TECH, OFFER_TYPE, BUSINESS_TYPE,
-#                          CREATION_YEAR, END_CREATION_YEAR,
-#                          MO_CREATED_DATE, SO_CREATED_DATE,
-#                          OFFER_STATUS)
+train <- train %>% select(MO_ID, SO_ID, 
+                          TECH, OFFER_TYPE, BUSINESS_TYPE,
+                          OFFER_PRICE, SERVICE_LIST_PRICE,
+                          PRICE_LIST,ISIC.1, ISIC.2,
+                          COSTS_PRODUCT_A,
+                          COSTS_PRODUCT_B,
+                          COSTS_PRODUCT_C,
+                          COSTS_PRODUCT_D,
+                          COSTS_PRODUCT_E,
+                          CREATION_YEAR,
+                          MO_CREATED_DATE, SO_CREATED_DATE,
+                          DIFFERENT_END_CUSTOMER,
+                          REV_SUM,
+                          CURRENCY,
+                          OFFER_STATUS)
 
 folds <- train %>% vfold_cv(v=5)
 
 ### DATA PREPARATION with recipe
 library(lubridate)
 library(quantmod) # for exchange rates
+library(priceR)
+
+CNY <- filter(exchange_rate_latest("CNY"), currency=="EUR")[,2]
+USD <- filter(exchange_rate_latest("USD"), currency=="EUR")[,2]
+GBP <- filter(exchange_rate_latest("GBP"), currency=="EUR")[,2]
 
 rec <- recipe(
   OFFER_STATUS ~ ., data = train) %>%
@@ -109,32 +130,48 @@ rec <- recipe(
   #data types of dates, impute missing with mean
   step_mutate_at(CREATION_YEAR, fn = function(x) parse_date_time(x,orders="dmY") %>% year()) %>%
   step_mutate_at(CREATION_YEAR, fn = ~replace_na(.,as.integer(mean(CREATION_YEAR)))) %>% 
-  step_mutate_at(MO_CREATED_DATE, SO_CREATED_DATE, fn = function(x) as.numeric(parse_date_time(gsub(pattern="[[:punct:]]", ":", x),orders=c("d:m:Y H:M", "Y:m:d H:M:S")))) %>%
+  step_mutate_at(MO_CREATED_DATE, SO_CREATED_DATE, fn = function(x) parse_date_time(gsub(pattern="[[:punct:]]", ":", x),orders=c("d:m:Y H:M", "Y:m:d H:M:S"))) %>%
   
   #exchange currencies to EUR
   #create exchange rate column and multiply prices
-  step_mutate_at(CURRENCY, fn= function(x) case_when(
-    (x == "EURO") ~ "EUR",
-    (x == "CHINESE YUAN") ~ "CNY",
-    (x == "US DOLLAR") ~ "USD",
-    (x == "POUND STERLING") ~ "GBP",
-    TRUE ~ "NA"
-  )) %>%
-  # step_mutate(EXCHANGE_RATE = case_when(
-  #   str_replace_all(CURRENCY, " ", "") != "NA" ~ NA,
-  #   TRUE ~  getFX(str_replace_all(paste("EUR/",CURRENCY), " ", "")
+  #step_mutate_at(CURRENCY, fn= function(x) case_when(
+  #  (x == "EURO") ~ "EUR",
+  #  (x == "CHINESE YUAN") ~ "CNY",
+  #  (x == "US DOLLAR") ~ "USD",
+  #  (x == "POUND STERLING") ~ "GBP",
+  #  TRUE ~ "NA"
+  #)) %>%
+   #step_mutate(
+  #   EXCHANGE_RATE = case_when(
+  #     str_replace_all(CURRENCY, " ", "") != "NA" ~ NA,
+  #     TRUE ~  getFX(str_replace_all(paste("EUR/",CURRENCY), " ", "")
   #                                    , from = (SO_CREATED_DATE %>% date())
   # ))) %>%
   
+  step_mutate(
+    REV_SUM = case_when(
+    is.na(CURRENCY) ~ NA_real_,
+    CURRENCY == "EURO" ~ REV_SUM,
+    CURRENCY == "CHINESE YUAN" ~ CNY*REV_SUM,
+    CURRENCY == "US DOLLAR" ~ USD*REV_SUM,
+    CURRENCY == "POUND STERLING" ~ GBP*REV_SUM,
+    TRUE ~ NA_real_
+  ),
+    REV_SUM = case_when(
+      is.na(REV_SUM) ~ 0,
+      REV_SUM == 0.0 ~ 0,
+      TRUE ~ log10(REV_SUM)
+    )) %>%
+
   #impute numerics with mean
   step_impute_mean(all_numeric_predictors(), -all_outcomes()) %>%
   
   #logarithmetize revenues (#of digits)
-  step_mutate_at(REV_CURRENT_YEAR.1, REV_CURRENT_YEAR.2, fn = function(x) case_when(
-    is.na(x) ~ 0,
-    x == 0.0 ~ 0,
-    TRUE ~ log10(x)
-  )) %>% 
+  #step_mutate_at(REV_CURRENT_YEAR.1, REV_CURRENT_YEAR.2, fn = function(x) case_when(
+  #  is.na(x) ~ 0,
+  #  x == 0.0 ~ 0,
+  #  TRUE ~ log10(x)
+  #)) %>% 
   
   step_novel(all_nominal(), -all_outcomes(), -has_role("ID"), new_level="new") %>%
   step_unknown(all_nominal(), -all_outcomes(), new_level = "none") %>% 
@@ -142,6 +179,7 @@ rec <- recipe(
   step_string2factor(all_nominal(), -all_outcomes(), -has_role("ID")) %>%
   step_dummy(all_nominal_predictors(), -all_outcomes(), -has_role("ID")) %>%
   step_naomit(all_predictors(), -all_outcomes(), -has_role("ID"), skip = TRUE) %>%
+  #step_pca(all_numeric_predictors(), -all_outcomes()) %>%
   step_zv(all_predictors(), -all_outcomes())
 
 rec_data <- rec %>% prep() %>% bake(NULL)
@@ -180,29 +218,42 @@ trained_model <- final_workflow %>%
 
 
 # try
+trained_model <- wflow %>% 
+  fit(data=train)
+
 train_set_with_predictions <-
   bind_cols(
     train,
-    trained_model %>% predict(train)
+    trained_model %>% predict(train, type="prob")
   )
 train_set_with_predictions
 
+train_set_with_predictions <- train_set_with_predictions %>%
+  mutate(pred=as.factor(ifelse(.pred_0>0.2,0,1)))
+
+bal_accuracy_vec(train_set_with_predictions$OFFER_STATUS, train_set_with_predictions$pred)
 bal_accuracy_vec(train_set_with_predictions$OFFER_STATUS, train_set_with_predictions$.pred_class)
 
 test_set_with_predictions <-
   bind_cols(
     test,
-    trained_model %>% predict(test)
+    trained_model %>% predict(test, type="prob")
   )
 test_set_with_predictions
-test_predictions <- trained_model %>% predict(test)
+
+test_set_with_predictions <- test_set_with_predictions %>%
+  mutate(pred=as.factor(ifelse(.pred_0>0.2,0,1)))
+
+test_predictions <- trained_model %>% predict(test, type="prob")
+test_predictions <- test_predictions %>%
+  mutate(pred=as.factor(ifelse(.pred_0>0.2,0,1)))
 test_predictions
 
 all(template_ids == output_ids)
 
 #create output file
-output <- data.frame(id=output_ids,prediction=test_predictions)
-output <- rename(output, prediction=.pred_class)
+output <- data.frame(id=output_ids,prediction=test_predictions$pred)
+#output <- rename(output, prediction=prediction.pred)
 
 output_file <- write.csv(output, file="predictions_the_gr8ful_gr8_8.csv", row.names=FALSE)
 
