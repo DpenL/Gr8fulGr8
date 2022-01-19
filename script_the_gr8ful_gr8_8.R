@@ -4,7 +4,7 @@ library(rsample)
 
 set.seed(2022)
 options(dplyr.width = Inf) # show all columns when printing to console
-d
+
 # read csv
 cust <- read_csv("customers.csv")
 trans <- read_csv("transactions.csv")
@@ -32,11 +32,14 @@ trans <- trans %>% mutate(ISIC.1 = case_when(
   is.na(ISIC) ~ "NA",
   TRUE ~ as.character(as.numeric(ISIC) %/% 100)
 ))
-  
 trans <- trans %>% mutate(ISIC.2 = case_when(
     is.na(ISIC) ~ "NA",
-    TRUE ~ as.character(as.numeric(ISIC) %% 100)
-  )) 
+    TRUE ~ as.character((as.numeric(ISIC) %/% 10) %% 10)
+  ))
+trans <- trans %>% mutate(ISIC.3 = case_when(
+  is.na(ISIC) ~ "NA",
+  TRUE ~ as.character(as.numeric(ISIC) %% 10)
+)) 
 #remove full ISIC column
 trans <- trans %>% select(-ISIC)
 
