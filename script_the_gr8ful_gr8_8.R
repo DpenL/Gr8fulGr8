@@ -32,16 +32,22 @@ trans <- trans %>% mutate(ISIC.1 = case_when(
   is.na(ISIC) ~ "NA",
   TRUE ~ as.character(as.numeric(ISIC) %/% 100)
 ))
-trans <- trans %>% mutate(ISIC.2 = case_when(
-    is.na(ISIC) ~ "NA",
-    TRUE ~ as.character((as.numeric(ISIC) %/% 10) %% 10)
-  ))
-trans <- trans %>% mutate(ISIC.3 = case_when(
-  is.na(ISIC) ~ "NA",
-  TRUE ~ as.character(as.numeric(ISIC) %% 10)
-)) 
+# trans <- trans %>% mutate(ISIC.2 = case_when( ##two levels deep
+#   is.na(ISIC) ~ "NA",
+#   TRUE ~ as.character(as.numeric(ISIC) %/% 10)
+# ))
+# trans <- trans %>% mutate(ISIC.2 = case_when(
+#     is.na(ISIC) ~ "NA",
+#     TRUE ~ as.character((as.numeric(ISIC) %/% 10) %% 10)
+#   ))
+# trans <- trans %>% mutate(ISIC.3 = case_when(
+#   is.na(ISIC) ~ "NA",
+#   TRUE ~ as.character(as.numeric(ISIC) %% 10)
+# )) 
 #remove full ISIC column
-trans <- trans %>% select(-ISIC)
+#trans <- trans %>% select(-ISIC)
+trans <- trans %>% mutate(TOTAL_COST = MATERIAL_COST + SERVICE_COST)
+
 
 #prepare customer keys
 cust <- cust %>% mutate(CUSTOMER = as.integer(CUSTOMER))
@@ -92,7 +98,8 @@ train <- train %>% select(-TEST_SET_ID)
 train <- train %>% select(MO_ID, SO_ID, 
                           TECH, OFFER_TYPE, BUSINESS_TYPE,
                           OFFER_PRICE, SERVICE_LIST_PRICE,
-                          PRICE_LIST,ISIC.1, ISIC.2,
+                          PRICE_LIST, ISIC.1, ISIC,
+                          TOTAL_COST,
                           COSTS_PRODUCT_A,
                           COSTS_PRODUCT_B,
                           COSTS_PRODUCT_C,
@@ -104,6 +111,9 @@ train <- train %>% select(MO_ID, SO_ID,
                           REV_SUM,
                           DELTA_REV,
                           CURRENCY,
+                          SALES_OFFICE,
+                          SALES_LOCATION,
+                          COUNTRY,
                           OFFER_STATUS)
 
 folds <- train %>% vfold_cv(v=5)
@@ -208,7 +218,7 @@ rec_test <- rec %>% prep() %>% bake(new_data=test)
 View(rec_test%>% mutate_all(is.na) %>% summarize_all(sum))
 
 #train a random forest model
-train_model <- rand_forest(mode = "classification", mtry = 3, trees = 500) %>%
+train_model <- rand_forest(mode = "classification", mtry = 5, trees = 500) %>%
   set_engine("ranger",  importance = "impurity")                  
 
 train_model
@@ -236,10 +246,9 @@ final_workflow
 trained_model <- final_workflow %>% 
   fit(data=train)
 
-
 # try
-trained_model <- wflow %>% 
-  fit(data=train)
+#trained_model <- wflow %>% 
+#  fit(data=train)
 
 train_set_with_predictions <-
   bind_cols(
