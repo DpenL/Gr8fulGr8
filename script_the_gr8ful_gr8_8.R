@@ -64,11 +64,13 @@ cust <- cust %>% mutate(
 
 cust <- cust %>% select(-REV_CURRENT_YEAR, -REV_CURRENT_YEAR.1, -REV_CURRENT_YEAR.2)
 
+
+
 # left join all three csv files
 df <- trans %>% left_join(geo) %>% left_join(cust) #join cust a second time on END_CUSTOMER
 #names(cust) <- paste0("END_", names(cust))
 #df <- df %>% left_join(cust, c("END_CUSTOMER" = "END_CUSTOMER", "COUNTRY" = "END_COUNTRY"))
-
+test
 # check missing values from different attributes
 df %>% summarize_all(function(x) sum(is.na(x)))
 
