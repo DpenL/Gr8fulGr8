@@ -47,8 +47,8 @@ trans <- trans %>% mutate(ISIC.1 = case_when(
 #remove full ISIC column
 #trans <- trans %>% select(-ISIC)
 trans <- trans %>% mutate(TOTAL_COST = MATERIAL_COST + SERVICE_COST)
-trans <- trans %>% mutate(SERVICE_COST_FRACT = SERVICE_COST / TOTAL_COST)
-
+trans <- trans %>% mutate(MATERIAL_COST_FRACT = MATERIAL_COST / TOTAL_COST)
+trans <- trans %>% mutate(PROP_MATERIAL_TO_SERVICE_COST = MATERIAL_COST / SERVICE_COST)
 
 #prepare customer keys
 cust <- cust %>% mutate(CUSTOMER = as.integer(CUSTOMER))
@@ -107,7 +107,7 @@ train <- train %>% select(MO_ID, SO_ID,
                           TECH, OFFER_TYPE, BUSINESS_TYPE,
                           OFFER_PRICE, SERVICE_LIST_PRICE,
                           PRICE_LIST, ISIC.1, ISIC,
-                          TOTAL_COST, SERVICE_COST_FRACT,
+                          TOTAL_COST, MATERIAL_COST_FRACT, PROP_MATERIAL_TO_SERVICE_COST,
                           COSTS_PRODUCT_A,
                           COSTS_PRODUCT_B,
                           COSTS_PRODUCT_C,
