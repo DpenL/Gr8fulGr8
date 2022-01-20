@@ -63,6 +63,13 @@ cust <- cust %>% mutate(
   DELTA_REV = REV_CURRENT_YEAR.1 - REV_CURRENT_YEAR.2
   )
 
+#whether customers currency is that of their country, assume CH uses Euro
+cust <- cust %>% mutate(
+  FOREIGN_CURRENCY = as.factor(case_when(
+    (COUNTRY == "France" || COUNTRY == "Switzerland") && CURRENCY == "Euro" ~ 0,
+    TRUE ~ 1
+  )))
+
 cust <- cust %>% select(-REV_CURRENT_YEAR, -REV_CURRENT_YEAR.1, -REV_CURRENT_YEAR.2)
 
 # left join all three csv files
@@ -111,7 +118,7 @@ train <- train %>% select(MO_ID, SO_ID,
                           DIFFERENT_END_CUSTOMER,
                           REV_SUM,
                           DELTA_REV,
-                          CURRENCY,
+                          CURRENCY, FOREIGN_CURRENCY,
                           SALES_OFFICE,
                           SALES_LOCATION,
                           COUNTRY,
