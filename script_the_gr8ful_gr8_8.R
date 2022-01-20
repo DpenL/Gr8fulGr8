@@ -12,7 +12,7 @@ geo <- read_csv("geo.csv")
 
 # deal with key issues
 trans <- trans %>% mutate(CUSTOMER = as.integer(gsub("\"", "", CUSTOMER)))
-#trans <- trans %>% mutate(END_CUSTOMER = toupper(END_CUSTOMER))
+
 trans <- trans %>% mutate(END_CUSTOMER = case_when(
   is.na(END_CUSTOMER) ~ CUSTOMER, #unknown end_customer, assume same as customer
   toupper(END_CUSTOMER) == "NO" ~ as.integer("a"), #unknown end customer != customer TODO maybe handle this differently
@@ -32,20 +32,7 @@ trans <- trans %>% mutate(ISIC.1 = case_when(
   is.na(ISIC) ~ "NA",
   TRUE ~ as.character(as.numeric(ISIC) %/% 100)
 ))
-# trans <- trans %>% mutate(ISIC.2 = case_when( ##two levels deep
-#   is.na(ISIC) ~ "NA",
-#   TRUE ~ as.character(as.numeric(ISIC) %/% 10)
-# ))
-# trans <- trans %>% mutate(ISIC.2 = case_when(
-#     is.na(ISIC) ~ "NA",
-#     TRUE ~ as.character((as.numeric(ISIC) %/% 10) %% 10)
-#   ))
-# trans <- trans %>% mutate(ISIC.3 = case_when(
-#   is.na(ISIC) ~ "NA",
-#   TRUE ~ as.character(as.numeric(ISIC) %% 10)
-# )) 
-#remove full ISIC column
-#trans <- trans %>% select(-ISIC)
+
 trans <- trans %>% mutate(TOTAL_COST = MATERIAL_COST + SERVICE_COST)
 
 
@@ -116,7 +103,7 @@ train <- train %>% select(MO_ID, SO_ID,
                           COUNTRY,
                           OFFER_STATUS)
 
-folds <- train %>% vfold_cv(v=5)
+folds <- train %>% vfold_cv(v=5, strata=OFFER_STATUS)
 
 ### DATA PREPARATION with recipe
 library(lubridate)
@@ -145,23 +132,9 @@ rec <- recipe(
   #data types of dates, impute missing with mean
   step_mutate_at(CREATION_YEAR, fn = function(x) parse_date_time(x,orders="dmY") %>% year()) %>%
   step_mutate_at(CREATION_YEAR, fn = ~replace_na(.,as.integer(mean(CREATION_YEAR)))) %>% 
-  step_mutate_at(MO_CREATED_DATE, SO_CREATED_DATE, fn = function(x) parse_date_time(gsub(pattern="[[:punct:]]", ":", x),orders=c("d:m:Y H:M", "Y:m:d H:M:S"))) %>%
-  
-  #exchange currencies to EUR
-  #create exchange rate column and multiply prices
-  #step_mutate_at(CURRENCY, fn= function(x) case_when(
-  #  (x == "EURO") ~ "EUR",
-  #  (x == "CHINESE YUAN") ~ "CNY",
-  #  (x == "US DOLLAR") ~ "USD",
-  #  (x == "POUND STERLING") ~ "GBP",
-  #  TRUE ~ "NA"
-  #)) %>%
-   #step_mutate(
-  #   EXCHANGE_RATE = case_when(
-  #     str_replace_all(CURRENCY, " ", "") != "NA" ~ NA,
-  #     TRUE ~  getFX(str_replace_all(paste("EUR/",CURRENCY), " ", "")
-  #                                    , from = (SO_CREATED_DATE %>% date())
-  # ))) %>%
+  step_mutate_at(MO_CREATED_DATE, SO_CREATED_DATE, 
+                 fn = function(x) parse_date_time(gsub(pattern="[[:punct:]]", ":", x),
+                                   orders=c("d:m:Y H:M", "Y:m:d H:M:S"))) %>%
   
   step_mutate(
     REV_SUM = case_when(
@@ -258,7 +231,7 @@ train_set_with_predictions <-
 train_set_with_predictions
 
 train_set_with_predictions <- train_set_with_predictions %>%
-  mutate(pred=as.factor(ifelse(.pred_0>0.2,0,1)))
+  mutate(pred=as.factor(ifelse(.pred_0>0.21,0,1)))
 
 bal_accuracy_vec(train_set_with_predictions$OFFER_STATUS, train_set_with_predictions$pred)
 #bal_accuracy_vec(train_set_with_predictions$OFFER_STATUS, train_set_with_predictions$.pred_class)
