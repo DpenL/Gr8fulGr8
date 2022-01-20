@@ -32,9 +32,9 @@ trans <- trans %>% mutate(ISIC.1 = case_when(
   is.na(ISIC) ~ "NA",
   TRUE ~ as.character(as.numeric(ISIC) %/% 100)
 ))
-# trans <- trans %>% mutate(ISIC.2 = case_when( ##two levels deep
-#   is.na(ISIC) ~ "NA",
-#   TRUE ~ as.character(as.numeric(ISIC) %/% 10)
+#  trans <- trans %>% mutate(ISIC.2 = case_when( ##two levels deep
+#    is.na(ISIC) ~ "NA",
+#    TRUE ~ as.character(as.numeric(ISIC) %/% 10)
 # ))
 # trans <- trans %>% mutate(ISIC.2 = case_when(
 #     is.na(ISIC) ~ "NA",
@@ -47,6 +47,7 @@ trans <- trans %>% mutate(ISIC.1 = case_when(
 #remove full ISIC column
 #trans <- trans %>% select(-ISIC)
 trans <- trans %>% mutate(TOTAL_COST = MATERIAL_COST + SERVICE_COST)
+trans <- trans %>% mutate(SERVICE_COST_FRACT = SERVICE_COST / TOTAL_COST)
 
 
 #prepare customer keys
@@ -99,7 +100,7 @@ train <- train %>% select(MO_ID, SO_ID,
                           TECH, OFFER_TYPE, BUSINESS_TYPE,
                           OFFER_PRICE, SERVICE_LIST_PRICE,
                           PRICE_LIST, ISIC.1, ISIC,
-                          TOTAL_COST,
+                          TOTAL_COST, SERVICE_COST_FRACT,
                           COSTS_PRODUCT_A,
                           COSTS_PRODUCT_B,
                           COSTS_PRODUCT_C,
