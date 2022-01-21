@@ -55,6 +55,10 @@ trans <- trans %>% mutate(NTH_SO = order(order(SO_CREATED_DATE,  decreasing = FA
 tallied <- trans %>% group_by(CUSTOMER) %>% tally()
 trans <- trans %>% left_join(tallied)
 trans <- trans %>% rename(N_OFFERS_TO_CUSTOMER = n)
+#rank offers made to customer by creation date
+trans <- trans %>% group_by(CUSTOMER) %>% mutate(NTH_OFFER_TO_CUST =
+  order(order(SO_CREATED_DATE, decreasing=FALSE))                                          
+)
 
 
 #prepare customer keys
