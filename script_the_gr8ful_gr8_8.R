@@ -49,6 +49,9 @@ trans <- trans %>% mutate(ISIC.1 = case_when(
 trans <- trans %>% mutate(TOTAL_COST = MATERIAL_COST + SERVICE_COST)
 trans <- trans %>% mutate(MATERIAL_COST_FRACT = MATERIAL_COST / TOTAL_COST)
 trans <- trans %>% mutate(PROP_MATERIAL_TO_SERVICE_COST = MATERIAL_COST / SERVICE_COST)
+#rank suboffers for each MO by creation date
+trans <- trans %>% mutate(NTH_SO = order(order(SO_CREATED_DATE,  decreasing = FALSE)))
+
 
 #prepare customer keys
 cust <- cust %>% mutate(CUSTOMER = as.integer(CUSTOMER))
@@ -114,7 +117,7 @@ train <- train %>% select(MO_ID, SO_ID,
                           COSTS_PRODUCT_D,
                           COSTS_PRODUCT_E,
                           CREATION_YEAR,
-                          MO_CREATED_DATE, SO_CREATED_DATE,
+                          MO_CREATED_DATE, SO_CREATED_DATE, NTH_SO,
                           DIFFERENT_END_CUSTOMER,
                           REV_SUM,
                           DELTA_REV,
