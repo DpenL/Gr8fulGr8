@@ -51,6 +51,10 @@ trans <- trans %>% mutate(MATERIAL_COST_FRACT = MATERIAL_COST / TOTAL_COST)
 trans <- trans %>% mutate(PROP_MATERIAL_TO_SERVICE_COST = MATERIAL_COST / SERVICE_COST)
 #rank suboffers for each MO by creation date
 trans <- trans %>% mutate(NTH_SO = order(order(SO_CREATED_DATE,  decreasing = FALSE)))
+#count # of offers made to each customer
+tallied <- trans %>% group_by(CUSTOMER) %>% tally()
+trans <- trans %>% left_join(tallied)
+trans <- trans %>% rename(N_OFFERS_TO_CUSTOMER = n)
 
 
 #prepare customer keys
