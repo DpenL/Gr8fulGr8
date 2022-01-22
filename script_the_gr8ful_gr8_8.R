@@ -77,16 +77,19 @@ cust <- cust %>% mutate(
 #whether customers currency is that of their country, assume CH uses Euro
 cust <- cust %>% mutate(
   FOREIGN_CURRENCY = as.factor(case_when(
-    (COUNTRY == "France" || COUNTRY == "Switzerland") && CURRENCY == "Euro" ~ 0,
+    (COUNTRY == "France" | COUNTRY == "Switzerland") & CURRENCY == "Euro" ~ 0,
     TRUE ~ 1
   )))
 
 cust <- cust %>% select(-REV_CURRENT_YEAR, -REV_CURRENT_YEAR.1, -REV_CURRENT_YEAR.2)
 
 # left join all three csv files
-df <- trans %>% left_join(geo) %>% left_join(cust) #join cust a second time on END_CUSTOMER
+df <- trans %>% left_join(geo) %>% left_join(cust)
+#join cust a second time on END_CUSTOMER
 #names(cust) <- paste0("END_", names(cust))
 #df <- df %>% left_join(cust, c("END_CUSTOMER" = "END_CUSTOMER", "COUNTRY" = "END_COUNTRY"))
+df <- df %>% ungroup() %>%  select(-CUSTOMER)
+
 
 # check missing values from different attributes
 df %>% summarize_all(function(x) sum(is.na(x)))
@@ -126,6 +129,7 @@ train <- train %>% select(MO_ID, SO_ID,
                           COSTS_PRODUCT_E,
                           CREATION_YEAR,
                           MO_CREATED_DATE, SO_CREATED_DATE, NTH_SO,
+                          N_OFFERS_TO_CUSTOMER, NTH_OFFER_TO_CUST,
                           DIFFERENT_END_CUSTOMER,
                           REV_SUM,
                           DELTA_REV,
@@ -135,7 +139,7 @@ train <- train %>% select(MO_ID, SO_ID,
                           COUNTRY,
                           OFFER_STATUS)
 
-folds <- train %>% vfold_cv(v=5)
+folds <- train %>% vfold_cv(v=5, strata=OFFER_STATUS)
 
 ### DATA PREPARATION with recipe
 library(lubridate)
