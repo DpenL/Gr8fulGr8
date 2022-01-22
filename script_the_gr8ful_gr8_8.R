@@ -1,6 +1,7 @@
 library(tidyverse)
 library(tidymodels)
 library(rsample)
+library(doParallel)
 
 set.seed(2022)
 options(dplyr.width = Inf) # show all columns when printing to console
@@ -47,7 +48,8 @@ trans <- trans %>% mutate(ISIC.1 = case_when(
 #remove full ISIC column
 #trans <- trans %>% select(-ISIC)
 trans <- trans %>% mutate(TOTAL_COST = MATERIAL_COST + SERVICE_COST)
-
+trans <- trans %>% mutate(MO_CREATED_DATE = as.numeric(parse_date_time(gsub(pattern="[[:punct:]]", ":", MO_CREATED_DATE),orders=c("d:m:Y H:M", "Y:m:d H:M:S"))))
+trans <- trans %>% mutate(SO_CREATED_DATE = as.numeric(parse_date_time(gsub(pattern="[[:punct:]]", ":", SO_CREATED_DATE),orders=c("d:m:Y H:M", "Y:m:d H:M:S"))))
 
 #prepare customer keys
 cust <- cust %>% mutate(CUSTOMER = as.integer(CUSTOMER))
@@ -61,6 +63,12 @@ cust <- cust %>% mutate(
   REV_SUM = REV_CURRENT_YEAR.1 + REV_CURRENT_YEAR.2,
   DELTA_REV = REV_CURRENT_YEAR.1 - REV_CURRENT_YEAR.2
   )
+
+#data types of dates, impute missing with mean
+cust <- cust %>% mutate(CREATION_YEAR = as.numeric(parse_date_time(CREATION_YEAR,orders="dmY") %>% lubridate::year()))
+#cust <- cust %>% mutate(CREATION_YEAR = ~replace_na(.,as.integer(mean(CREATION_YEAR))))
+
+
 
 cust <- cust %>% select(-REV_CURRENT_YEAR, -REV_CURRENT_YEAR.1, -REV_CURRENT_YEAR.2)
 
@@ -116,7 +124,6 @@ train <- train %>% select(MO_ID, SO_ID,
                           COUNTRY,
                           OFFER_STATUS)
 
-folds <- train %>% vfold_cv(v=5)
 
 ### DATA PREPARATION with recipe
 library(lubridate)
@@ -141,12 +148,7 @@ rec <- recipe(
   
   #step_mutate_at(REV_CURRENT_YEAR.1, REV_CURRENT_YEAR.2,
   #   fn = function(x) predict(discretize(x, cuts = 4, keep_na = TRUE, na.rm = TRUE), x)) %>% 
-  
-  #data types of dates, impute missing with mean
-  step_mutate_at(CREATION_YEAR, fn = function(x) parse_date_time(x,orders="dmY") %>% year()) %>%
-  step_mutate_at(CREATION_YEAR, fn = ~replace_na(.,as.integer(mean(CREATION_YEAR)))) %>% 
-  step_mutate_at(MO_CREATED_DATE, SO_CREATED_DATE, fn = function(x) parse_date_time(gsub(pattern="[[:punct:]]", ":", x),orders=c("d:m:Y H:M", "Y:m:d H:M:S"))) %>%
-  
+
   #exchange currencies to EUR
   #create exchange rate column and multiply prices
   #step_mutate_at(CURRENCY, fn= function(x) case_when(
@@ -162,7 +164,6 @@ rec <- recipe(
   #     TRUE ~  getFX(str_replace_all(paste("EUR/",CURRENCY), " ", "")
   #                                    , from = (SO_CREATED_DATE %>% date())
   # ))) %>%
-  
   step_mutate(
     REV_SUM = case_when(
     is.na(CURRENCY) || is.nan(CURRENCY) ~ NA_real_,
@@ -218,7 +219,7 @@ rec_test <- rec %>% prep() %>% bake(new_data=test)
 View(rec_test%>% mutate_all(is.na) %>% summarize_all(sum))
 
 #train a random forest model
-train_model <- rand_forest(mode = "classification", mtry = 5, trees = 500) %>%
+train_model <- rand_forest(mode = "classification", mtry = tune(), trees = 500, min_n=tune()) %>%
   set_engine("ranger",  importance = "impurity")                  
 
 train_model
@@ -231,6 +232,39 @@ wflow <-
   #evaluation
 
 wflow
+
+#folds
+folds <- train %>% vfold_cv(v=5)
+
+#tuning mtry and min_n params with regular grid
+reg_grid <- grid_regular(
+  mtry(range=c(1,20)),
+  min_n(range=c(2,10)),
+  levels=10
+)
+
+doParallel::registerDoParallel()
+tune_res <- tune_grid(
+  wflow,
+  resamples=folds,
+  grid=reg_grid
+)
+
+tune_res %>% 
+  collect_metrics() %>% 
+  filter(.metric == "bal_accuracy") %>% 
+  mutate(min_n = factor(min_n)) %>% 
+  ggplot(aes(mtry, mean, color =min_n)) +
+  geom_line(alpha=0.5, size = 1.5) +
+  geom_point()
+
+best_tuned <- select_best(tune_res, "bal_accuracy")
+
+final_rf <- finalize_model(
+  train_model,
+  best_tuned
+)
+
 
 
 fitted <- wflow %>% fit_resamples(folds, metrics = metric_set(yardstick::bal_accuracy))
