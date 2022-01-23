@@ -2,6 +2,7 @@ library(tidyverse)
 library(tidymodels)
 library(rsample)
 library(doParallel)
+library(parallel)
 
 set.seed(2022)
 options(dplyr.width = Inf) # show all columns when printing to console
@@ -219,7 +220,7 @@ rec_test <- rec %>% prep() %>% bake(new_data=test)
 View(rec_test%>% mutate_all(is.na) %>% summarize_all(sum))
 
 #train a random forest model
-train_model <- rand_forest(mode = "classification", mtry = tune(), trees = 500, min_n=tune()) %>%
+train_model <- rand_forest(mode = "classification", mtry = tune(), trees = 500) %>%
   set_engine("ranger",  importance = "impurity")                  
 
 train_model
@@ -239,32 +240,34 @@ folds <- train %>% vfold_cv(v=5)
 #tuning mtry and min_n params with regular grid
 reg_grid <- grid_regular(
   mtry(range=c(1,20)),
-  min_n(range=c(2,10)),
+  #min_n(range=c(2,10)),
   levels=10
 )
-
-doParallel::registerDoParallel()
+# 
+# cl <- makeCluster(3)
+# doParallel::registerDoParallel(cl)
 tune_res <- tune_grid(
   wflow,
   resamples=folds,
-  grid=reg_grid
+  grid=reg_grid,
+  metrics=metric_set(bal_accuracy, strata = OFFER_STATUS)
 )
 
 tune_res %>% 
   collect_metrics() %>% 
   filter(.metric == "bal_accuracy") %>% 
-  mutate(min_n = factor(min_n)) %>% 
-  ggplot(aes(mtry, mean, color =min_n)) +
+  #mutate(min_n = factor(min_n)) %>% 
+  ggplot(aes(mtry, mean, color =mtry)) +
   geom_line(alpha=0.5, size = 1.5) +
   geom_point()
-
 best_tuned <- select_best(tune_res, "bal_accuracy")
 
 final_rf <- finalize_model(
   train_model,
   best_tuned
 )
-
+### end tuning, plateau starts ~mtry=20 at 65% mean accurracy
+#above model could be used below
 
 
 fitted <- wflow %>% fit_resamples(folds, metrics = metric_set(yardstick::bal_accuracy))
