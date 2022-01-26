@@ -1,6 +1,7 @@
 library(tidyverse)
 library(tidymodels)
 library(rsample)
+library(lubridate)
 
 set.seed(2022)
 options(dplyr.width = Inf) # show all columns when printing to console
@@ -32,6 +33,7 @@ trans <- trans %>% mutate(ISIC.1 = case_when(
   is.na(ISIC) ~ "NA",
   TRUE ~ as.character(as.numeric(ISIC) %/% 100)
 ))
+trans <- trans %>% mutate(ISIC = as.character(ISIC))
 #  trans <- trans %>% mutate(ISIC.2 = case_when( ##two levels deep
 #    is.na(ISIC) ~ "NA",
 #    TRUE ~ as.character(as.numeric(ISIC) %/% 10)
@@ -52,14 +54,25 @@ trans <- trans %>% mutate(PROP_MATERIAL_TO_SERVICE_COST = MATERIAL_COST / SERVIC
 #rank suboffers for each MO by creation date
 trans <- trans %>% mutate(NTH_SO = order(order(SO_CREATED_DATE,  decreasing = FALSE)))
 #count # of offers made to each customer
-tallied <- trans %>% group_by(CUSTOMER) %>% tally()
+tallied <- trans %>% group_by(CUSTOMER, SALES_LOCATION) %>% tally()
 trans <- trans %>% left_join(tallied)
 trans <- trans %>% rename(N_OFFERS_TO_CUSTOMER = n)
 #rank offers made to customer by creation date
-trans <- trans %>% group_by(CUSTOMER) %>% mutate(NTH_OFFER_TO_CUST =
+trans <- trans %>% group_by(CUSTOMER, SALES_LOCATION) %>% mutate(NTH_OFFER_TO_CUST =
   order(order(SO_CREATED_DATE, decreasing=FALSE))                                          
 )
-
+#split creation dates into  years...
+trans<- trans %>% mutate(MO_CREATED_DATE = parse_date_time(gsub(pattern="[[:punct:]]", ":", MO_CREATED_DATE),orders=c("d:m:Y H:M", "Y:m:d H:M:S")))
+trans <- trans %>% mutate(SO_CREATED_DATE = parse_date_time(gsub(pattern="[[:punct:]]", ":", SO_CREATED_DATE),orders=c("d:m:Y H:M", "Y:m:d H:M:S")))
+trans<- trans %>% mutate(MO_CREATED_YEAR = MO_CREATED_DATE %>% year()) 
+trans<- trans %>% mutate(SO_CREATED_YEAR = SO_CREATED_DATE %>% year())
+trans<- trans %>% mutate(MO_CREATED_QUARTER = MO_CREATED_DATE %>% quarter()) 
+trans<- trans %>% mutate(SO_CREATED_QUARTER = SO_CREATED_DATE %>% quarter())
+trans<- trans %>% mutate(MO_CREATED_MONTH = MO_CREATED_DATE %>% month()) 
+trans<- trans %>% mutate(SO_CREATED_MONTH = SO_CREATED_DATE %>% month())
+trans<- trans %>% mutate(MO_CREATED_DAY = MO_CREATED_DATE %>% day()) 
+trans<- trans %>% mutate(SO_CREATED_DAY = SO_CREATED_DATE %>% day())
+trans<- trans %>% select(-SO_CREATED_DATE, -MO_CREATED_DATE)
 
 #prepare customer keys
 cust <- cust %>% mutate(CUSTOMER = as.integer(CUSTOMER))
@@ -128,7 +141,8 @@ train <- train %>% select(MO_ID, SO_ID,
                           COSTS_PRODUCT_D,
                           COSTS_PRODUCT_E,
                           CREATION_YEAR,
-                          MO_CREATED_DATE, SO_CREATED_DATE, NTH_SO,
+                          MO_CREATED_YEAR, SO_CREATED_YEAR, MO_CREATED_QUARTER, SO_CREATED_QUARTER,
+                          MO_CREATED_MONTH, SO_CREATED_MONTH, MO_CREATED_DAY, SO_CREATED_DAY, NTH_SO,
                           N_OFFERS_TO_CUSTOMER, NTH_OFFER_TO_CUST,
                           DIFFERENT_END_CUSTOMER,
                           REV_SUM,
@@ -139,7 +153,7 @@ train <- train %>% select(MO_ID, SO_ID,
                           COUNTRY,
                           OFFER_STATUS)
 
-folds <- train %>% vfold_cv(v=5, strata=OFFER_STATUS)
+#folds <- train %>% vfold_cv(v=5, strata=OFFER_STATUS)
 
 ### DATA PREPARATION with recipe
 library(lubridate)
@@ -168,7 +182,7 @@ rec <- recipe(
   #data types of dates, impute missing with mean
   step_mutate_at(CREATION_YEAR, fn = function(x) parse_date_time(x,orders="dmY") %>% year()) %>%
   step_mutate_at(CREATION_YEAR, fn = ~replace_na(.,as.integer(mean(CREATION_YEAR)))) %>% 
-  step_mutate_at(MO_CREATED_DATE, SO_CREATED_DATE, fn = function(x) parse_date_time(gsub(pattern="[[:punct:]]", ":", x),orders=c("d:m:Y H:M", "Y:m:d H:M:S"))) %>%
+
   
   #exchange currencies to EUR
   #create exchange rate column and multiply prices
@@ -215,16 +229,9 @@ rec <- recipe(
       DELTA_REV == 0.0 ~ 0,
       TRUE ~ log10(DELTA_REV)
     )) %>%
-  
   #impute numerics with mean
   step_impute_mean(all_numeric_predictors(), -all_outcomes()) %>%
-  
-  #logarithmetize revenues (#of digits)
-  #step_mutate_at(REV_CURRENT_YEAR.1, REV_CURRENT_YEAR.2, fn = function(x) case_when(
-  #  is.na(x) ~ 0,
-  #  x == 0.0 ~ 0,
-  #  TRUE ~ log10(x)
-  #)) %>% 
+
   
   step_novel(all_nominal(), -all_outcomes(), -has_role("ID"), new_level="new") %>%
   step_unknown(all_nominal(), -all_outcomes(), new_level = "none") %>% 
@@ -241,7 +248,7 @@ rec_test <- rec %>% prep() %>% bake(new_data=test)
 View(rec_test%>% mutate_all(is.na) %>% summarize_all(sum))
 
 #train a random forest model
-train_model <- rand_forest(mode = "classification", mtry = 5, trees = 500) %>%
+train_model <- rand_forest(mode = "classification", mtry = 5, trees=500, min_n=1) %>% 
   set_engine("ranger",  importance = "impurity")                  
 
 train_model
@@ -255,12 +262,51 @@ wflow <-
 
 wflow
 
+#folds
+folds <- train %>% vfold_cv(v=5,strata=OFFER_STATUS)
+
+#tuning mtry and min_n params with regular grid
+# reg_grid <- grid_regular(
+#   mtry(range=c(1,10)),
+#   #min_n(rage=c(1,10)),
+#   levels=5
+# )
+# #  
+# # cl <- makeCluster(3)
+# # doParallel::registerDoParallel(cl)
+#  tune_res <- tune_grid(
+#    wflow,
+#    resamples=folds,
+#    grid=reg_grid,
+#    metrics=metric_set(bal_accuracy)
+#  )
+# # 
+#  tune_res %>% 
+#    collect_metrics() %>% 
+#    filter(.metric == "bal_accuracy") %>% 
+#   #mutate(min_n = factor(min_n)) %>% 
+#    ggplot(aes(mtry, mean, color=mtry))+
+#    geom_line(alpha=0.5, size = 1.5) +
+#    geom_point()
+#  best_tuned <- select_best(tune_res, "bal_accuracy")
+#  
+#  best_tuned
+#  
+#  final_rf <- finalize_model(
+#    train_model,
+#    best_tuned
+#  )
+### end tuning, plateau starts ~mtry=20 at 65% mean accurracy
+#above model could be used below
 
 fitted <- wflow %>% fit_resamples(folds, metrics = metric_set(yardstick::bal_accuracy))
 
 best_config <- fitted %>%
   # find the best tried configuration for a certain criterion
   select_best('bal_accuracy')
+
+best_config
+
 final_workflow <- wflow %>% 
   finalize_workflow(best_config)
 
@@ -268,6 +314,8 @@ final_workflow
 
 trained_model <- final_workflow %>% 
   fit(data=train)
+
+trained_model %>% extract_fit_parsnip() %>% vip::vip(num_features=20)
 
 # try
 #trained_model <- wflow %>% 
@@ -278,12 +326,13 @@ train_set_with_predictions <-
     train,
     trained_model %>% predict(train, type="prob")
   )
+
 train_set_with_predictions
 
 train_set_with_predictions <- train_set_with_predictions %>%
   mutate(pred=as.factor(ifelse(.pred_0>0.2,0,1)))
 
-bal_accuracy_vec(train_set_with_predictions$OFFER_STATUS, train_set_with_predictions$pred)
+training_balacc <- bal_accuracy_vec(train_set_with_predictions$OFFER_STATUS, train_set_with_predictions$pred)
 #bal_accuracy_vec(train_set_with_predictions$OFFER_STATUS, train_set_with_predictions$.pred_class)
 
 test_set_with_predictions <-
@@ -311,3 +360,5 @@ output_file <- write.csv(output, file="predictions_the_gr8ful_gr8_8.csv", row.na
 
 output_file <- read_csv("predictions_the_gr8ful_gr8_8.csv")
 View(output_file)
+
+training_balacc
