@@ -244,7 +244,7 @@ reg_grid <- grid_regular(
   levels=10
 )
 # 
-# cl <- makeCluster(3)
+# cl <- makeCluster(2)
 # doParallel::registerDoParallel(cl)
 tune_res <- tune_grid(
   wflow,
@@ -252,6 +252,7 @@ tune_res <- tune_grid(
   grid=reg_grid,
   metrics=metric_set(bal_accuracy, strata = OFFER_STATUS)
 )
+#stopCluster(cl)
 
 tune_res %>% 
   collect_metrics() %>% 
