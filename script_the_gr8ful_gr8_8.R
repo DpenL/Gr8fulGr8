@@ -1,6 +1,9 @@
 library(tidyverse)
 library(tidymodels)
 library(rsample)
+library(lubridate)
+library(quantmod) # for exchange rates
+library(priceR) #dito
 
 set.seed(2022)
 options(dplyr.width = Inf) # show all columns when printing to console
@@ -12,7 +15,6 @@ geo <- read_csv("geo.csv")
 
 # deal with key issues
 trans <- trans %>% mutate(CUSTOMER = as.integer(gsub("\"", "", CUSTOMER)))
-#trans <- trans %>% mutate(END_CUSTOMER = toupper(END_CUSTOMER))
 trans <- trans %>% mutate(END_CUSTOMER = case_when(
   is.na(END_CUSTOMER) ~ CUSTOMER, #unknown end_customer, assume same as customer
   toupper(END_CUSTOMER) == "NO" ~ as.integer("a"), #unknown end customer != customer TODO maybe handle this differently
@@ -27,25 +29,12 @@ trans <- trans %>% mutate(DIFFERENT_END_CUSTOMER = case_when(
 #remove END_CUSTOMER column
 trans <- trans %>% select(-END_CUSTOMER)
 
-#split ISIC into hierarchical parts TODO: right now they will get turned into factors
+#split ISIC into hierarchical parts
 trans <- trans %>% mutate(ISIC.1 = case_when(
   is.na(ISIC) ~ "NA",
   TRUE ~ as.character(as.numeric(ISIC) %/% 100)
 ))
-# trans <- trans %>% mutate(ISIC.2 = case_when( ##two levels deep
-#   is.na(ISIC) ~ "NA",
-#   TRUE ~ as.character(as.numeric(ISIC) %/% 10)
-# ))
-# trans <- trans %>% mutate(ISIC.2 = case_when(
-#     is.na(ISIC) ~ "NA",
-#     TRUE ~ as.character((as.numeric(ISIC) %/% 10) %% 10)
-#   ))
-# trans <- trans %>% mutate(ISIC.3 = case_when(
-#   is.na(ISIC) ~ "NA",
-#   TRUE ~ as.character(as.numeric(ISIC) %% 10)
-# )) 
-#remove full ISIC column
-#trans <- trans %>% select(-ISIC)
+
 trans <- trans %>% mutate(TOTAL_COST = MATERIAL_COST + SERVICE_COST)
 
 
@@ -63,11 +52,16 @@ cust <- cust %>% mutate(
   )
 
 cust <- cust %>% select(-REV_CURRENT_YEAR, -REV_CURRENT_YEAR.1, -REV_CURRENT_YEAR.2)
+#feature: is customers different from that of their country?
+#assumes France uses Euro
+cust <- cust %>% mutate(FOREIGN_CURRENCY=case_when(
+  toupper(CURRENCY) == "EURO" ~ 0,
+  TRUE ~ 1
+))
+
 
 # left join all three csv files
-df <- trans %>% left_join(geo) %>% left_join(cust) #join cust a second time on END_CUSTOMER
-#names(cust) <- paste0("END_", names(cust))
-#df <- df %>% left_join(cust, c("END_CUSTOMER" = "END_CUSTOMER", "COUNTRY" = "END_COUNTRY"))
+df <- trans %>% left_join(geo) %>% left_join(cust)
 
 # check missing values from different attributes
 df %>% summarize_all(function(x) sum(is.na(x)))
@@ -93,8 +87,7 @@ train <- train %>% mutate(
     TRUE ~ 1)
   ))
 
-train <- train %>% select(-TEST_SET_ID)
-
+#final features before recipe
 train <- train %>% select(MO_ID, SO_ID, 
                           TECH, OFFER_TYPE, BUSINESS_TYPE,
                           OFFER_PRICE, SERVICE_LIST_PRICE,
@@ -110,18 +103,16 @@ train <- train %>% select(MO_ID, SO_ID,
                           DIFFERENT_END_CUSTOMER,
                           REV_SUM,
                           DELTA_REV,
-                          CURRENCY,
+                          CURRENCY, FOREIGN_CURRENCY,
                           SALES_OFFICE,
                           SALES_LOCATION,
                           COUNTRY,
                           OFFER_STATUS)
 
+#fold cross evaluation
 folds <- train %>% vfold_cv(v=5)
 
 ### DATA PREPARATION with recipe
-library(lubridate)
-library(quantmod) # for exchange rates
-library(priceR)
 
 CNY <- filter(exchange_rate_latest("CNY"), currency=="EUR")[,2]
 USD <- filter(exchange_rate_latest("USD"), currency=="EUR")[,2]
@@ -129,7 +120,6 @@ GBP <- filter(exchange_rate_latest("GBP"), currency=="EUR")[,2]
 
 rec <- recipe(
   OFFER_STATUS ~ ., data = train) %>%
-  # step_mutate(OFFER_ID = ifelse(is.na(SO_ID), MO_ID, SO_ID), role = "ID") %>%
   update_role(MO_ID, SO_ID, new_role = "ID") %>%
   step_mutate_at(all_nominal(), -all_outcomes(), -has_role("ID"), fn = toupper) %>%
  
@@ -138,41 +128,22 @@ rec <- recipe(
     is.na(OFFER_PRICE) ~ SERVICE_LIST_PRICE,
     TRUE ~ OFFER_PRICE
   )) %>% 
-  
-  #step_mutate_at(REV_CURRENT_YEAR.1, REV_CURRENT_YEAR.2,
-  #   fn = function(x) predict(discretize(x, cuts = 4, keep_na = TRUE, na.rm = TRUE), x)) %>% 
-  
+
   #data types of dates, impute missing with mean
   step_mutate_at(CREATION_YEAR, fn = function(x) parse_date_time(x,orders="dmY") %>% year()) %>%
   step_mutate_at(CREATION_YEAR, fn = ~replace_na(.,as.integer(mean(CREATION_YEAR)))) %>% 
   step_mutate_at(MO_CREATED_DATE, SO_CREATED_DATE, fn = function(x) parse_date_time(gsub(pattern="[[:punct:]]", ":", x),orders=c("d:m:Y H:M", "Y:m:d H:M:S"))) %>%
+
   
-  #exchange currencies to EUR
-  #create exchange rate column and multiply prices
-  #step_mutate_at(CURRENCY, fn= function(x) case_when(
-  #  (x == "EURO") ~ "EUR",
-  #  (x == "CHINESE YUAN") ~ "CNY",
-  #  (x == "US DOLLAR") ~ "USD",
-  #  (x == "POUND STERLING") ~ "GBP",
-  #  TRUE ~ "NA"
-  #)) %>%
-   #step_mutate(
-  #   EXCHANGE_RATE = case_when(
-  #     str_replace_all(CURRENCY, " ", "") != "NA" ~ NA,
-  #     TRUE ~  getFX(str_replace_all(paste("EUR/",CURRENCY), " ", "")
-  #                                    , from = (SO_CREATED_DATE %>% date())
-  # ))) %>%
-  
-  step_mutate(
-    REV_SUM = case_when(
+  step_mutate(REV_SUM = case_when(
     is.na(CURRENCY) || is.nan(CURRENCY) ~ NA_real_,
     CURRENCY == "EURO" ~ REV_SUM,
     CURRENCY == "CHINESE YUAN" ~ CNY*REV_SUM,
     CURRENCY == "US DOLLAR" ~ USD*REV_SUM,
     CURRENCY == "POUND STERLING" ~ GBP*REV_SUM,
     TRUE ~ NA_real_
-  ),
-    REV_SUM = case_when(
+  )) %>% 
+  step_mutate(REV_SUM =  case_when(
       is.na(REV_SUM) || is.nan(REV_SUM) ~ 0,
       REV_SUM == 0.0 ~ 0,
       TRUE ~ log10(REV_SUM)
@@ -193,18 +164,14 @@ rec <- recipe(
       TRUE ~ log10(DELTA_REV)
     )) %>%
   
+  
+  step_mutate(CURRENCY = as.factor(CURRENCY)) %>% 
+  
   #impute numerics with mean
   step_impute_mean(all_numeric_predictors(), -all_outcomes()) %>%
   
-  #logarithmetize revenues (#of digits)
-  #step_mutate_at(REV_CURRENT_YEAR.1, REV_CURRENT_YEAR.2, fn = function(x) case_when(
-  #  is.na(x) ~ 0,
-  #  x == 0.0 ~ 0,
-  #  TRUE ~ log10(x)
-  #)) %>% 
-  
   step_novel(all_nominal(), -all_outcomes(), -has_role("ID"), new_level="new") %>%
-  step_unknown(all_nominal(), -all_outcomes(), new_level = "none") %>% 
+  step_unknown(FOREIGN_CURRENCY, all_nominal(), -all_outcomes(), new_level = "none") %>% 
   #data type of nominal attributes
   step_string2factor(all_nominal(), -all_outcomes(), -has_role("ID")) %>%
   step_dummy(all_nominal_predictors(), -all_outcomes(), -has_role("ID")) %>%
@@ -246,10 +213,6 @@ final_workflow
 trained_model <- final_workflow %>% 
   fit(data=train)
 
-# try
-#trained_model <- wflow %>% 
-#  fit(data=train)
-
 train_set_with_predictions <-
   bind_cols(
     train,
@@ -261,7 +224,6 @@ train_set_with_predictions <- train_set_with_predictions %>%
   mutate(pred=as.factor(ifelse(.pred_0>0.2,0,1)))
 
 bal_accuracy_vec(train_set_with_predictions$OFFER_STATUS, train_set_with_predictions$pred)
-#bal_accuracy_vec(train_set_with_predictions$OFFER_STATUS, train_set_with_predictions$.pred_class)
 
 test_set_with_predictions <-
   bind_cols(
@@ -282,7 +244,6 @@ all(template_ids == output_ids)
 
 #create output file
 output <- data.frame(id=output_ids,prediction=test_predictions$pred)
-#output <- rename(output, prediction=prediction.pred)
 
 output_file <- write.csv(output, file="predictions_the_gr8ful_gr8_8.csv", row.names=FALSE)
 
