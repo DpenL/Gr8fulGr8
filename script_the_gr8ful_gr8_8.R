@@ -58,7 +58,7 @@ cust <- cust %>% mutate(FOREIGN_CURRENCY=case_when(
   toupper(CURRENCY) == "EURO" ~ 0,
   TRUE ~ 1
 ))
-
+cust <- cust %>% mutate(FOREIGN_CURRENCY=as_factor(FOREIGN_CURRENCY))
 
 # left join all three csv files
 df <- trans %>% left_join(geo) %>% left_join(cust)
@@ -131,9 +131,10 @@ rec <- recipe(
 
   #data types of dates, impute missing with mean
   step_mutate_at(CREATION_YEAR, fn = function(x) parse_date_time(x,orders="dmY") %>% year()) %>%
-  step_mutate_at(CREATION_YEAR, fn = ~replace_na(.,as.integer(mean(CREATION_YEAR)))) %>% 
+  step_impute_mean(CREATION_YEAR) %>% 
+  #step_mutate_at(CREATION_YEAR, fn = ~replace_na(.,as.integer(mean(CREATION_YEAR)))) %>% 
   step_mutate_at(MO_CREATED_DATE, SO_CREATED_DATE, fn = function(x) parse_date_time(gsub(pattern="[[:punct:]]", ":", x),orders=c("d:m:Y H:M", "Y:m:d H:M:S"))) %>%
-
+  
   
   step_mutate(REV_SUM = case_when(
     is.na(CURRENCY) || is.nan(CURRENCY) ~ NA_real_,
@@ -165,13 +166,13 @@ rec <- recipe(
     )) %>%
   
   
-  step_mutate(CURRENCY = as.factor(CURRENCY)) %>% 
+  step_mutate(CURRENCY = as_factor(CURRENCY)) %>% 
   
   #impute numerics with mean
   step_impute_mean(all_numeric_predictors(), -all_outcomes()) %>%
   
   step_novel(all_nominal(), -all_outcomes(), -has_role("ID"), new_level="new") %>%
-  step_unknown(FOREIGN_CURRENCY, all_nominal(), -all_outcomes(), new_level = "none") %>% 
+  step_unknown(all_nominal(), -all_outcomes(), new_level = "none") %>% 
   #data type of nominal attributes
   step_string2factor(all_nominal(), -all_outcomes(), -has_role("ID")) %>%
   step_dummy(all_nominal_predictors(), -all_outcomes(), -has_role("ID")) %>%
@@ -223,7 +224,7 @@ train_set_with_predictions
 train_set_with_predictions <- train_set_with_predictions %>%
   mutate(pred=as.factor(ifelse(.pred_0>0.2,0,1)))
 
-bal_accuracy_vec(train_set_with_predictions$OFFER_STATUS, train_set_with_predictions$pred)
+bal_acc <- bal_accuracy_vec(train_set_with_predictions$OFFER_STATUS, train_set_with_predictions$pred)
 
 test_set_with_predictions <-
   bind_cols(
@@ -249,3 +250,5 @@ output_file <- write.csv(output, file="predictions_the_gr8ful_gr8_8.csv", row.na
 
 output_file <- read_csv("predictions_the_gr8ful_gr8_8.csv")
 View(output_file)
+
+bal_acc
